@@ -21,10 +21,11 @@ export const supportedSearchProviders = [
   "searxng",
   "duckduckgo",
   "perplexity",
+  "exa",
+  "firecrawl",
 ] as const;
 
 export const deprecatedSearchProviders = new Set([
-  "exa",
   "serper",
   "baidu",
   "openrouter",

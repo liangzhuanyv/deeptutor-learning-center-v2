@@ -1,0 +1,36 @@
+{
+  "schema_version": "learning-import/v1",
+  "project": {
+    "external_id": "biology-101",
+    "name": "Biology 101",
+    "kind": "course"
+  },
+  "bank": {
+    "external_id": "bio-bank",
+    "name": "Biology mini bank",
+    "version": "v1",
+    "source": {"type": "fixture"}
+  },
+  "items": [
+    {
+      "external_id": "cell-1",
+      "module_path": ["Cells"],
+      "knowledge_points": ["Nucleus"],
+      "question_type": "single_choice",
+      "stem": "Which organelle contains DNA?",
+      "options": {"A": "Nucleus", "B": "Ribosome"},
+      "source_answer": "A",
+      "source_explanation": "Nucleus contains most cellular DNA."
+    },
+    {
+      "external_id": "cell-2",
+      "module_path": ["Cells"],
+      "knowledge_points": [],
+      "question_type": "single_choice",
+      "stem": "Missing answer item",
+      "options": {"A": "Yes", "B": "No"},
+      "source_answer": "",
+      "source_explanation": ""
+    }
+  ]
+}

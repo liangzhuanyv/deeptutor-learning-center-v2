@@ -50,6 +50,7 @@ class NotebookEntryItem(BaseModel):
     user_answer: str = ""
     user_answer_images: list[AnswerImageItem] = []
     is_correct: bool = False
+    is_answered: bool = False
     bookmarked: bool = False
     followup_session_id: str = ""
     ai_judgment: str = ""
@@ -207,6 +208,7 @@ async def list_entries(
     category_id: int | None = Query(default=None),
     bookmarked: bool | None = Query(default=None),
     is_correct: bool | None = Query(default=None),
+    answered: bool | None = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> NotebookEntryListResponse:
@@ -215,6 +217,7 @@ async def list_entries(
         category_id=category_id,
         bookmarked=bookmarked,
         is_correct=is_correct,
+        answered=answered,
         limit=limit,
         offset=offset,
     )

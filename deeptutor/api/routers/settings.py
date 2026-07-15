@@ -328,6 +328,8 @@ def _provider_choices() -> dict[str, list[dict[str, str]]]:
         {"value": "duckduckgo", "label": "DuckDuckGo", "base_url": ""},
         {"value": "perplexity", "label": "Perplexity", "base_url": ""},
         {"value": "serper", "label": "Serper", "base_url": ""},
+        {"value": "exa", "label": "Exa", "base_url": ""},
+        {"value": "firecrawl", "label": "Firecrawl", "base_url": ""},
     ]
     tts = sorted(
         [

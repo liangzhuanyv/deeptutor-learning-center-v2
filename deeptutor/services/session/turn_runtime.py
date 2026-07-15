@@ -246,13 +246,17 @@ def _format_question_bank_entry(entry: dict[str, Any]) -> str:
     difficulty = str(entry.get("difficulty", "") or "").strip()
     qtype = str(entry.get("question_type", "") or "").strip()
     is_correct = bool(entry.get("is_correct"))
+    is_answered = bool(entry.get("is_answered")) or bool(str(entry.get("user_answer", "") or "").strip())
 
     badges: list[str] = []
     if qtype:
         badges.append(qtype)
     if difficulty:
         badges.append(difficulty)
-    badges.append("correct" if is_correct else "incorrect")
+    if is_answered:
+        badges.append("correct" if is_correct else "incorrect")
+    else:
+        badges.append("reference")
     badge_text = " · ".join(badges)
 
     lines.append(f"### Question (from {title}) [{badge_text}]")

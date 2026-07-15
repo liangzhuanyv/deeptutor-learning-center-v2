@@ -10,7 +10,6 @@ from ..base import BaseSearchProvider
 
 _PROVIDERS: dict[str, Type[BaseSearchProvider]] = {}
 _DEPRECATED_UNSUPPORTED: dict[str, str] = {
-    "exa": "Deprecated; use brave/tavily/jina/searxng/duckduckgo/perplexity/serper.",
     "baidu": "Deprecated; use brave/tavily/jina/searxng/duckduckgo/perplexity/serper.",
     "openrouter": "Deprecated; use brave/tavily/jina/searxng/duckduckgo/perplexity/serper.",
 }
@@ -147,9 +146,9 @@ def get_default_provider(**kwargs) -> BaseSearchProvider:
 
 def _register_builtin_providers() -> None:
     # Import for side effects (register_provider decorators).
-    from . import brave, duckduckgo, jina, perplexity, searxng, serper, tavily
+    from . import brave, duckduckgo, exa, firecrawl, jina, perplexity, searxng, serper, tavily
 
-    _ = (brave, duckduckgo, jina, perplexity, searxng, serper, tavily)
+    _ = (brave, duckduckgo, exa, firecrawl, jina, perplexity, searxng, serper, tavily)
 
 
 _register_builtin_providers()

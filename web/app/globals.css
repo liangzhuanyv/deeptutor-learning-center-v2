@@ -22,6 +22,10 @@
      and against the terracotta primary. Inspired by Claude's chrome:
      keep bg essentially white, save the visible warmth for accents. */
   :root {
+  /* Local fallbacks keep offline/self-hosted builds independent of Google Fonts. */
+  --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-serif: Georgia, "Times New Roman", serif;
+
     color-scheme: light;
     --background: #fdfcf9;
     --foreground: #1c1816;

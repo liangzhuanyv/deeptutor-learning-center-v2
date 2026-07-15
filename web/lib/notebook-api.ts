@@ -140,6 +140,7 @@ export interface NotebookEntry {
   difficulty: string;
   user_answer: string;
   user_answer_images?: NotebookAnswerImage[];
+  is_answered: boolean;
   is_correct: boolean;
   bookmarked: boolean;
   followup_session_id: string;
@@ -176,6 +177,7 @@ export async function listNotebookEntries(
     category_id?: number;
     bookmarked?: boolean;
     is_correct?: boolean;
+    answered?: boolean;
     limit?: number;
     offset?: number;
   } = {},
@@ -187,6 +189,8 @@ export async function listNotebookEntries(
     params.set("bookmarked", String(filter.bookmarked));
   if (filter.is_correct !== undefined)
     params.set("is_correct", String(filter.is_correct));
+  if (filter.answered !== undefined)
+    params.set("answered", String(filter.answered));
   if (filter.limit !== undefined) params.set("limit", String(filter.limit));
   if (filter.offset !== undefined) params.set("offset", String(filter.offset));
   const query = params.toString();

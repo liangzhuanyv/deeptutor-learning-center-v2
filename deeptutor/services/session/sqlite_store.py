@@ -1532,6 +1532,7 @@ class SQLiteSessionStore:
             "difficulty": row["difficulty"] or "",
             "user_answer": row["user_answer"] or "",
             "user_answer_images": images,
+            "is_answered": bool((row["user_answer"] or "").strip()) or bool(images),
             "is_correct": bool(row["is_correct"]),
             "bookmarked": bool(row["bookmarked"]),
             "followup_session_id": row["followup_session_id"] or "",
@@ -1548,6 +1549,7 @@ class SQLiteSessionStore:
         limit: int,
         offset: int,
         session_id: str | None = None,
+        answered: bool | None = None,
     ) -> dict[str, Any]:
         base = """
             SELECT
@@ -1574,6 +1576,16 @@ class SQLiteSessionStore:
         if is_correct is not None:
             conditions.append("n.is_correct = ?")
             params.append(1 if is_correct else 0)
+        if answered is True:
+            conditions.append(
+                "((TRIM(COALESCE(n.user_answer, '')) <> '') "
+                "OR (COALESCE(n.user_answer_images_json, '[]') <> '[]'))"
+            )
+        elif answered is False:
+            conditions.append(
+                "((TRIM(COALESCE(n.user_answer, '')) = '') "
+                "AND (COALESCE(n.user_answer_images_json, '[]') = '[]'))"
+            )
         if session_id is not None:
             conditions.append("n.session_id = ?")
             params.append(session_id)
@@ -1597,6 +1609,7 @@ class SQLiteSessionStore:
         offset: int = 0,
         *,
         session_id: str | None = None,
+        answered: bool | None = None,
     ) -> dict[str, Any]:
         return await self._run(
             self._list_notebook_entries_sync,
@@ -1606,6 +1619,7 @@ class SQLiteSessionStore:
             limit,
             offset,
             session_id,
+            answered,
         )
 
     def _get_notebook_entry_sync(self, entry_id: int) -> dict[str, Any] | None:

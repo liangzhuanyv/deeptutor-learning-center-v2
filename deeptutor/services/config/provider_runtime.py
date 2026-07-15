@@ -46,8 +46,10 @@ SUPPORTED_SEARCH_PROVIDERS = {
     "perplexity",
     "serper",
     "none",
+    "exa",
+    "firecrawl",
 }
-DEPRECATED_SEARCH_PROVIDERS = {"exa", "baidu", "openrouter"}
+DEPRECATED_SEARCH_PROVIDERS = {"baidu", "openrouter"}
 
 
 LLM_LOCALHOST_PROVIDERS = ("ollama", "vllm")

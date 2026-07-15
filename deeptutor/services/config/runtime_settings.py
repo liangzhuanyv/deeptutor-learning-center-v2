@@ -301,6 +301,27 @@ def _string(value: Any) -> str:
     return "" if value is None else str(value).strip()
 
 
+def _normalize_mineru_api_base_url(value: Any) -> str:
+    """Return the MinerU host URL expected by the v4 client.
+
+    The client appends ``/api/v4/...`` itself. Older settings occasionally
+    stored a full task endpoint such as ``.../api/v4/extract/task``, which
+    produced a duplicated URL and a 404 during indexing.
+    """
+    base = _string(value).rstrip("/") or "https://mineru.net"
+    known_suffixes = (
+        "/api/v4/file-urls/batch",
+        "/api/v4/extract-results/batch",
+        "/api/v4/extract/task",
+        "/api/v4",
+    )
+    for suffix in known_suffixes:
+        if base.lower().endswith(suffix):
+            base = base[: -len(suffix)].rstrip("/")
+            break
+    return base or "https://mineru.net"
+
+
 class RuntimeSettingsService:
     """JSON-backed runtime settings rooted in data/user/settings.
 
@@ -805,8 +826,7 @@ class RuntimeSettingsService:
         language = _string(settings.get("language")) or "auto"
         return {
             "mode": mode,
-            "api_base_url": _string(settings.get("api_base_url")).rstrip("/")
-            or "https://mineru.net",
+            "api_base_url": _normalize_mineru_api_base_url(settings.get("api_base_url")),
             "api_token": _string(settings.get("api_token")),
             "local_cli_path": _string(settings.get("local_cli_path")),
             "model_download_source": download_source,

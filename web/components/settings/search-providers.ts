@@ -39,7 +39,7 @@ const BASE_URL_ONLY: SearchProviderFieldSpec = {
 };
 
 // Providers we don't model (a custom/unknown value, the deprecated
-// exa/baidu/openrouter set, or an empty selection): show every field so we
+// baidu/openrouter set, or an empty selection): show every field so we
 // never hide a control the provider might actually need.
 const UNKNOWN: SearchProviderFieldSpec = {
   apiKey: true,
@@ -56,6 +56,8 @@ const SEARCH_PROVIDER_FIELDS: Record<string, SearchProviderFieldSpec> = {
   jina: KEY_ONLY,
   perplexity: KEY_ONLY,
   serper: KEY_ONLY,
+  exa: KEY_ONLY,
+  firecrawl: KEY_ONLY,
 };
 
 /**

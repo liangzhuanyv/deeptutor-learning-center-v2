@@ -48,6 +48,20 @@ _MAX_TOTAL_BYTES = 500 * 1024 * 1024
 _MAX_ENTRIES = 5000
 
 
+def _normalize_api_base_url(value: str) -> str:
+    base = (value or "").rstrip("/") or "https://mineru.net"
+    for suffix in (
+        "/api/v4/file-urls/batch",
+        "/api/v4/extract-results/batch",
+        "/api/v4/extract/task",
+        "/api/v4",
+    ):
+        if base.lower().endswith(suffix):
+            base = base[: -len(suffix)].rstrip("/")
+            break
+    return base or "https://mineru.net"
+
+
 def parse_cloud(
     pdf_path: Path,
     output_base: Path,
@@ -74,7 +88,7 @@ def parse_cloud(
     if not pdf_path.is_file():
         raise MinerUError(f"PDF file not found: {pdf_path}")
 
-    base_url = config.api_base_url.rstrip("/")
+    base_url = _normalize_api_base_url(config.api_base_url)
     headers = {
         "Authorization": f"Bearer {config.api_token}",
         "Accept": "application/json",

@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { searchProviderFields } from "../components/settings/search-providers";
 
 test("key-based providers show only the API key field", () => {
-  for (const provider of ["brave", "tavily", "jina", "perplexity", "serper"]) {
+  for (const provider of ["brave", "tavily", "jina", "perplexity", "serper", "exa", "firecrawl"]) {
     assert.deepEqual(
       searchProviderFields(provider),
       { apiKey: true, baseUrl: false, baseUrlRequired: false },
@@ -32,10 +32,9 @@ test("zero-config providers show no connection fields", () => {
 });
 
 test("unknown, deprecated, and empty providers fall back to showing every field", () => {
-  // Deprecated (exa/baidu/openrouter), a custom value, and no selection must
+  // Deprecated (baidu/openrouter), a custom value, and no selection must
   // never hide a control we can't reason about.
   for (const provider of [
-    "exa",
     "baidu",
     "openrouter",
     "custom-thing",

@@ -129,6 +129,10 @@ class PathService:
     def get_chat_history_db(self) -> Path:
         return self._user_data_dir / "chat_history.db"
 
+    def get_learning_center_db(self) -> Path:
+        """Return the independent Learning Center v2 SQLite database path."""
+        return self._user_data_dir / "learning_center.db"
+
     def get_public_outputs_root(self) -> Path:
         return self._user_data_dir
 

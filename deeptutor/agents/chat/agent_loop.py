@@ -484,11 +484,12 @@ class AgentLoop:
                     )
 
         response_stream = await self._create_response_stream(kwargs, trace_meta, stage)
+        last_usage = None
         try:
             async for chunk in response_stream:
                 usage = getattr(chunk, "usage", None)
                 if usage is not None:
-                    self.pipeline.usage.add_from_response(usage)
+                    last_usage = usage
                 choices = getattr(chunk, "choices", None) or []
                 if not choices:
                     continue
@@ -538,6 +539,8 @@ class AgentLoop:
                     if arguments:
                         acc["arguments"] += str(arguments)
                         output_chars += len(str(arguments))
+            if last_usage is not None:
+                self.pipeline.usage.add_from_response(last_usage)
         finally:
             close = getattr(response_stream, "close", None)
             if callable(close):

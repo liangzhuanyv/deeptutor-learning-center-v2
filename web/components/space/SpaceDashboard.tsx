@@ -6,6 +6,7 @@ import { useTranslation } from "react-i18next";
 import {
   ArrowUpRight,
   ClipboardList,
+  BookOpenCheck,
   GraduationCap,
   History,
   NotebookPen,
@@ -19,6 +20,7 @@ import { listNotebooks, listNotebookEntries } from "@/lib/notebook-api";
 import { listPersonas } from "@/lib/personas-api";
 import { listSkills } from "@/lib/skills-api";
 import { fetchAllProgress } from "@/lib/learning-api";
+import { getLearningDashboardOverview } from "@/lib/learning-center-api";
 
 /**
  * Learning Space dashboard — the hub of `/space`.
@@ -35,6 +37,7 @@ type DashKey =
   | "chat_history"
   | "notebooks"
   | "question_bank"
+  | "exam_practice"
   | "personas"
   | "skills"
   | "mastery_path";
@@ -99,6 +102,19 @@ const GROUPS: DashboardGroup[] = [
         unit: { zh: "道题", en: "questions" },
         tile: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
         load: async () => (await listNotebookEntries({ limit: 1 })).total,
+      },
+      {
+        key: "exam_practice",
+        href: "/space/learning-center",
+        icon: BookOpenCheck,
+        title: { zh: "学习训练中心", en: "Learning Center" },
+        blurb: {
+          zh: "查看学习项目、练习证据、掌握度与待复习风险。",
+          en: "Review learning projects, practice evidence, mastery, and review risk.",
+        },
+        unit: { zh: "道题", en: "questions" },
+        tile: "bg-violet-500/10 text-violet-600 dark:text-violet-400",
+        load: async () => (await getLearningDashboardOverview()).question_count,
       },
     ],
   },

@@ -8,6 +8,8 @@ import {
   AlertTriangle,
   Bookmark,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   ClipboardList,
   ExternalLink,
   FolderOpen,
@@ -39,6 +41,8 @@ const MarkdownRenderer = dynamic(
 
 type FilterMode = "all" | "bookmarked" | "wrong";
 
+const PAGE_SIZE = 50;
+
 const FILTERS: { mode: FilterMode; label: string }[] = [
   { mode: "all", label: "All" },
   { mode: "bookmarked", label: "Bookmarked" },
@@ -53,6 +57,7 @@ export default function QuestionBankSection() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [filter, setFilter] = useState<FilterMode>("all");
   const [activeCategoryId, setActiveCategoryId] = useState<number | null>(null);
+  const [page, setPage] = useState(0);
   const [categories, setCategories] = useState<NotebookCategory[]>([]);
   const [pendingId, setPendingId] = useState<number | null>(null);
   const [showCategoryManager, setShowCategoryManager] = useState(false);
@@ -71,14 +76,16 @@ export default function QuestionBankSection() {
   }, []);
 
   const loadItems = useCallback(
-    async (mode: FilterMode, catId: number | null) => {
+    async (mode: FilterMode, catId: number | null, pageIndex: number) => {
       setErrorMsg(null);
       try {
         const response = await listNotebookEntries({
           bookmarked: mode === "bookmarked" ? true : undefined,
           is_correct: mode === "wrong" ? false : undefined,
+          answered: mode === "wrong" ? true : undefined,
           category_id: catId ?? undefined,
-          limit: 200,
+          limit: PAGE_SIZE,
+          offset: pageIndex * PAGE_SIZE,
         });
         setItems(response.items);
         setTotal(response.total);
@@ -92,9 +99,9 @@ export default function QuestionBankSection() {
   );
 
   useEffect(() => {
-    void loadItems(filter, activeCategoryId);
+    void loadItems(filter, activeCategoryId, page);
     void loadCategoriesData();
-  }, [filter, activeCategoryId, loadItems, loadCategoriesData]);
+  }, [filter, activeCategoryId, page, loadItems, loadCategoriesData]);
 
   const handleToggleBookmark = useCallback(
     async (item: NotebookEntry) => {
@@ -316,6 +323,7 @@ export default function QuestionBankSection() {
                 onClick={() => {
                   setFilter(mode);
                   setActiveCategoryId(null);
+                  setPage(0);
                 }}
                 className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] transition-colors ${
                   active
@@ -338,6 +346,7 @@ export default function QuestionBankSection() {
                 onClick={() => {
                   setActiveCategoryId(cat.id);
                   setFilter("all");
+                  setPage(0);
                 }}
                 className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] transition-colors ${
                   active
@@ -373,7 +382,7 @@ export default function QuestionBankSection() {
             {errorMsg}
           </p>
           <button
-            onClick={() => void loadItems(filter, activeCategoryId)}
+            onClick={() => void loadItems(filter, activeCategoryId, page)}
             className="mt-3 rounded-lg bg-[var(--primary)] px-4 py-1.5 text-[12px] font-medium text-white"
           >
             {t("Retry")}
@@ -423,15 +432,17 @@ export default function QuestionBankSection() {
                           {item.question_type}
                         </span>
                       )}
-                      <span
-                        className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold ${
-                          item.is_correct
-                            ? "bg-green-100 text-green-700 dark:bg-green-950/30 dark:text-green-400"
-                            : "bg-red-100 text-red-700 dark:bg-red-950/30 dark:text-red-400"
-                        }`}
-                      >
-                        {item.is_correct ? t("Correct") : t("Incorrect")}
-                      </span>
+                      {item.is_answered && (
+                        <span
+                          className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold ${
+                            item.is_correct
+                              ? "bg-green-100 text-green-700 dark:bg-green-950/30 dark:text-green-400"
+                              : "bg-red-100 text-red-700 dark:bg-red-950/30 dark:text-red-400"
+                          }`}
+                        >
+                          {item.is_correct ? t("Correct") : t("Incorrect")}
+                        </span>
+                      )}
                     </div>
                     <div className="text-[14px] font-medium text-[var(--foreground)]">
                       <MarkdownRenderer
@@ -628,13 +639,20 @@ export default function QuestionBankSection() {
 
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[11px]">
                   <div className="flex items-center gap-2">
-                    <Link
-                      href={`/?session=${encodeURIComponent(item.session_id)}`}
-                      className="inline-flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--muted)]/40 px-2.5 py-1 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
-                    >
-                      <ExternalLink size={10} />
-                      {item.session_title || t("Original Session")}
-                    </Link>
+                    {item.session_id.startsWith("imported-") ? (
+                      <span className="inline-flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--muted)]/40 px-2.5 py-1 text-[var(--muted-foreground)]">
+                        <ClipboardList size={10} />
+                        {item.session_title || t("Question Bank")}
+                      </span>
+                    ) : (
+                      <Link
+                        href={`/?session=${encodeURIComponent(item.session_id)}`}
+                        className="inline-flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--muted)]/40 px-2.5 py-1 text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] hover:text-[var(--foreground)]"
+                      >
+                        <ExternalLink size={10} />
+                        {item.session_title || t("Original Session")}
+                      </Link>
+                    )}
                     {item.followup_session_id && (
                       <Link
                         href={`/?session=${encodeURIComponent(item.followup_session_id)}`}
@@ -653,6 +671,32 @@ export default function QuestionBankSection() {
             );
           })}
         </ul>
+      )}
+
+      {total > PAGE_SIZE && (
+        <div className="flex items-center justify-center gap-3 pt-2">
+          <button
+            type="button"
+            disabled={page === 0 || loading}
+            onClick={() => setPage((current) => Math.max(0, current - 1))}
+            className="inline-flex items-center gap-1 rounded-lg border border-[var(--border)] px-3 py-1.5 text-[12px] text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <ChevronLeft className="h-3.5 w-3.5" />
+            {t("Previous")}
+          </button>
+          <span className="text-[12px] tabular-nums text-[var(--muted-foreground)]">
+            {page + 1} / {Math.ceil(total / PAGE_SIZE)}
+          </span>
+          <button
+            type="button"
+            disabled={(page + 1) * PAGE_SIZE >= total || loading}
+            onClick={() => setPage((current) => current + 1)}
+            className="inline-flex items-center gap-1 rounded-lg border border-[var(--border)] px-3 py-1.5 text-[12px] text-[var(--muted-foreground)] transition-colors hover:bg-[var(--muted)] disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {t("Next")}
+            <ChevronRight className="h-3.5 w-3.5" />
+          </button>
+        </div>
       )}
     </div>
   );

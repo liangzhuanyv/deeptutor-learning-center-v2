@@ -79,6 +79,7 @@ export default function QuestionBankPicker({
         const result = await listNotebookEntries({
           bookmarked: filter === "bookmarked" ? true : undefined,
           is_correct: filter === "wrong" ? false : undefined,
+          answered: filter === "wrong" ? true : undefined,
           category_id: activeCategoryId ?? undefined,
           limit: 200,
         });
@@ -259,15 +260,17 @@ export default function QuestionBankPicker({
                               {entry.question_type}
                             </span>
                           )}
-                          <span
-                            className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold ${
-                              entry.is_correct
-                                ? "bg-green-100 text-green-700 dark:bg-green-950/30 dark:text-green-400"
-                                : "bg-red-100 text-red-700 dark:bg-red-950/30 dark:text-red-400"
-                            }`}
-                          >
-                            {entry.is_correct ? t("Correct") : t("Incorrect")}
-                          </span>
+                          {entry.is_answered && (
+                            <span
+                              className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold ${
+                                entry.is_correct
+                                  ? "bg-green-100 text-green-700 dark:bg-green-950/30 dark:text-green-400"
+                                  : "bg-red-100 text-red-600 dark:bg-red-950/30 dark:text-red-400"
+                              }`}
+                            >
+                              {entry.is_correct ? t("Correct") : t("Incorrect")}
+                            </span>
+                          )}
                           {entry.bookmarked && (
                             <Bookmark
                               size={11}
