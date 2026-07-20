@@ -29,18 +29,18 @@ export default function ChatMinimap({ messages, onJump }: ChatMinimapProps) {
 
   if (ticks.length === 0) return null;
 
-  // Density: more messages → thinner ticks / tighter gap
+  // Density: more messages → thinner ticks / tighter gap, but always visible.
   const count = ticks.length;
-  const tickH = count > 40 ? 2 : count > 20 ? 3 : 4;
-  const gap = count > 40 ? 2 : count > 20 ? 3 : 4;
+  const tickH = count > 60 ? 3 : count > 30 ? 4 : count > 15 ? 5 : 6;
+  const gap = count > 60 ? 2 : count > 30 ? 3 : count > 15 ? 4 : 5;
 
   return (
     <div
-      className="pointer-events-none absolute inset-y-0 right-1 z-20 hidden md:flex items-center"
-      aria-hidden={false}
+      className="pointer-events-none absolute inset-y-0 right-0 z-30 hidden md:flex items-center pr-1.5"
+      aria-label={t("Conversation outline")}
     >
       <div
-        className="pointer-events-auto relative flex max-h-[70%] flex-col items-end justify-center py-2"
+        className="pointer-events-auto relative flex max-h-[72%] min-h-[120px] flex-col items-end justify-center rounded-full border border-[var(--border)]/60 bg-[var(--card)]/80 px-1.5 py-2.5 shadow-sm backdrop-blur-sm"
         style={{ gap }}
       >
         {ticks.map((m) => {
@@ -61,18 +61,22 @@ export default function ChatMinimap({ messages, onJump }: ChatMinimapProps) {
               onFocus={() => setHoverId(m.id)}
               onBlur={() => setHoverId((id) => (id === m.id ? null : id))}
               onClick={() => onJump(m.id)}
-              className={`rounded-full transition-all ${
+              className={`rounded-sm transition-all duration-150 ${
                 isUser
-                  ? "w-2.5 bg-[var(--muted-foreground)]/35 hover:bg-[var(--primary)]/70"
-                  : "w-3.5 bg-[var(--muted-foreground)]/55 hover:bg-[var(--primary)]"
-              } ${hovered ? "scale-y-125 opacity-100" : "opacity-80"}`}
-              style={{ height: tickH }}
+                  ? "w-2 bg-[var(--muted-foreground)]/55 hover:bg-[var(--primary)]"
+                  : "w-3.5 bg-[var(--foreground)]/45 hover:bg-[var(--primary)]"
+              } ${
+                hovered
+                  ? "scale-x-125 bg-[var(--primary)] opacity-100"
+                  : "opacity-90"
+              }`}
+              style={{ height: tickH, minHeight: tickH }}
             />
           );
         })}
 
         {hoverMsg && preview ? (
-          <div className="pointer-events-none absolute right-full mr-2 w-56 rounded-lg border border-[var(--border)] bg-[var(--card)] px-2.5 py-2 text-left shadow-md">
+          <div className="pointer-events-none absolute right-full top-1/2 z-40 mr-2 w-60 -translate-y-1/2 rounded-lg border border-[var(--border)] bg-[var(--card)] px-2.5 py-2 text-left shadow-lg">
             <div className="mb-0.5 text-[10px] font-medium uppercase tracking-wide text-[var(--muted-foreground)]">
               {hoverMsg.role === "user" ? t("Question") : t("Answer")}
             </div>
