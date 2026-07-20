@@ -34,7 +34,9 @@ import type { SelectedRecord } from "@/lib/notebook-selection-types";
 import type { SelectedHistorySession } from "@/components/chat/HistorySessionPicker";
 import type { SelectedQuestionEntry } from "@/components/chat/QuestionBankPicker";
 import ChatComposer from "@/components/chat/home/ChatComposer";
+import ChatMinimap from "@/components/chat/home/ChatMinimap";
 import { ChatMessageList } from "@/components/chat/home/ChatMessages";
+import ChatSearchPopover from "@/components/chat/home/ChatSearchPopover";
 import SessionLoadingView from "@/components/chat/home/SessionLoadingView";
 // Imported eagerly so the drawer shell is always mounted off-screen —
 // clicking a chip becomes a single CSS class flip, no chunk fetch + double
@@ -53,7 +55,7 @@ import {
   GeogebraTabProvider,
   useGeogebraTabOpener,
 } from "@/context/GeogebraTabContext";
-import { BookmarkPlus, Download, PanelRight } from "lucide-react";
+import { BookmarkPlus, Download, PanelRight, Search } from "lucide-react";
 import {
   useUnifiedChat,
   type MessageAttachment,
@@ -73,6 +75,12 @@ import {
   MAX_TOTAL_ATTACHMENT_BYTES,
 } from "@/lib/doc-attachments";
 import { useChatAutoScroll } from "@/hooks/useChatAutoScroll";
+import {
+  findMessageMatches,
+  scrollToMessageId,
+  selectionsToRevealMessage,
+} from "@/lib/chat-message-nav";
+import { buildVisiblePath } from "@/lib/message-branches";
 import { useMeasuredHeight } from "@/hooks/useMeasuredHeight";
 import {
   loadCapabilityPlaygroundConfigs,
@@ -619,6 +627,26 @@ export default function ChatPage() {
     }
   }, [capabilityNeedsConfig, ensureActivityPanelOpen]);
   const hasMessages = state.messages.length > 0;
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [activeMatchId, setActiveMatchId] = useState<number | null>(null);
+  const searchWrapRef = useRef<HTMLDivElement>(null);
+
+  const searchMatchIds = useMemo(() => {
+    if (!searchQuery.trim()) return new Set<number>();
+    return new Set(
+      findMessageMatches(state.messages, searchQuery).map((m) => m.id),
+    );
+  }, [state.messages, searchQuery]);
+
+  const visibleNavMessages = useMemo(
+    () =>
+      buildVisiblePath(state.messages, state.selectedBranches).messages.filter(
+        (m) => m.role === "user" || m.role === "assistant",
+      ),
+    [state.messages, state.selectedBranches],
+  );
+
   // Time-of-day greeting: seeded once on mount from the user's local clock so
   // the heading stays stable while they're on the page. State (not useMemo)
   // because the random pick would otherwise mismatch SSR ↔ client hydration.
@@ -864,6 +892,59 @@ export default function ChatPage() {
       console.error("Failed to copy assistant message:", error);
     }
   }, []);
+
+  const handleJumpToMessage = useCallback(
+    (messageId: number) => {
+      const visibleIds = new Set(
+        buildVisiblePath(state.messages, state.selectedBranches).messages
+          .map((m) => m.id)
+          .filter((id): id is number => id != null),
+      );
+
+      if (!visibleIds.has(messageId)) {
+        const selections = selectionsToRevealMessage(state.messages, messageId);
+        if (selections) {
+          for (const [parentKey, childId] of Object.entries(selections)) {
+            const parentId = parentKey === "null" ? null : Number(parentKey);
+            switchBranch(parentId, childId);
+          }
+        }
+      }
+
+      setActiveMatchId(messageId);
+      // Wait a frame (or two) for branch re-render before scrolling
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          scrollToMessageId(messageId, {
+            root: messagesContainerRef.current,
+          });
+        });
+      });
+
+      window.setTimeout(() => {
+        setActiveMatchId((cur) => (cur === messageId ? null : cur));
+      }, 1200);
+    },
+    [state.messages, state.selectedBranches, switchBranch, messagesContainerRef],
+  );
+
+  const closeSearch = useCallback(() => {
+    setSearchOpen(false);
+    setSearchQuery("");
+    setActiveMatchId(null);
+  }, []);
+
+  useEffect(() => {
+    if (!searchOpen) return;
+    const onPointer = (e: MouseEvent) => {
+      if (!searchWrapRef.current?.contains(e.target as Node)) {
+        setSearchOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onPointer);
+    return () => document.removeEventListener("mousedown", onPointer);
+  }, [searchOpen]);
+
   /* ---- URL-driven session loading ---- */
 
   const navigateToHome = useCallback(() => {
@@ -1843,6 +1924,25 @@ export default function ChatPage() {
                 label={t("Download Markdown")}
                 title={t("Download chat history as Markdown")}
               />
+              <div ref={searchWrapRef} className="relative">
+                <HeaderActionButton
+                  onClick={() => setSearchOpen((v) => !v)}
+                  active={searchOpen}
+                  disabled={!state.messages.length}
+                  icon={Search}
+                  label={t("Search in conversation")}
+                  title={t("Search messages in this chat")}
+                />
+                <ChatSearchPopover
+                  open={searchOpen}
+                  onClose={closeSearch}
+                  query={searchQuery}
+                  onQueryChange={setSearchQuery}
+                  messages={state.messages}
+                  onSelectMatch={handleJumpToMessage}
+                  activeMatchId={activeMatchId}
+                />
+              </div>
               <HeaderActionButton
                 onClick={toggleViewerPanel}
                 active={viewerPanelOpen}
@@ -1872,49 +1972,60 @@ export default function ChatPage() {
                 </div>
               </div>
             ) : (
-              <div
-                ref={messagesContainerRef}
-                data-chat-scroll-root="true"
-                onScroll={handleMessagesScroll}
-                onClick={handleMessagesClick}
-                className={`mx-auto w-full flex-1 min-h-0 space-y-9 overflow-y-auto pr-4 [scrollbar-gutter:stable] ${hasMessages ? "pt-6" : "pt-2 pb-6"}`}
-                style={
-                  hasMessages
-                    ? (() => {
-                        // The bottom 40 px of the messages area fades to
-                        // transparent so content "dissolves" into the composer
-                        // gutter. Without enough bottom padding, the fade
-                        // overlaps the last assistant paragraph and looks like
-                        // a stuck scroll — the user reaches scrollHeight but
-                        // can still see only a faded sliver of text. paddingBottom
-                        // is sized so the fade falls over empty space.
-                        const maskImage =
-                          "linear-gradient(to bottom, transparent 0px, #000 32px, #000 calc(100% - 40px), transparent 100%)";
-                        return {
-                          paddingBottom: "48px",
-                          WebkitMaskImage: maskImage,
-                          maskImage,
-                        };
-                      })()
-                    : undefined
-                }
-              >
-                <ChatMessageList
-                  messages={state.messages}
-                  isStreaming={state.isStreaming}
-                  sessionId={state.sessionId}
-                  language={state.language}
-                  onCopyAssistantMessage={copyAssistantMessage}
-                  onRegenerateMessage={handleRegenerateMessage}
-                  onConfirmOutline={handleConfirmOutline}
-                  onPreviewAttachment={handlePreviewMessageAttachment}
-                  onDeleteTurn={deleteTurn}
-                  selectedBranches={state.selectedBranches}
-                  onEditMessage={editMessage}
-                  onSwitchBranch={switchBranch}
-                  onSubmitUserReply={submitUserReply}
-                />
-                <div ref={messagesEndRef} className="h-px w-full shrink-0" />
+              <div className="relative flex min-h-0 flex-1 flex-col">
+                <div
+                  ref={messagesContainerRef}
+                  data-chat-scroll-root="true"
+                  onScroll={handleMessagesScroll}
+                  onClick={handleMessagesClick}
+                  className={`mx-auto w-full flex-1 min-h-0 space-y-9 overflow-y-auto pr-4 [scrollbar-gutter:stable] ${hasMessages ? "pt-6" : "pt-2 pb-6"}`}
+                  style={
+                    hasMessages
+                      ? (() => {
+                          // The bottom 40 px of the messages area fades to
+                          // transparent so content "dissolves" into the composer
+                          // gutter. Without enough bottom padding, the fade
+                          // overlaps the last assistant paragraph and looks like
+                          // a stuck scroll — the user reaches scrollHeight but
+                          // can still see only a faded sliver of text. paddingBottom
+                          // is sized so the fade falls over empty space.
+                          const maskImage =
+                            "linear-gradient(to bottom, transparent 0px, #000 32px, #000 calc(100% - 40px), transparent 100%)";
+                          return {
+                            paddingBottom: "48px",
+                            WebkitMaskImage: maskImage,
+                            maskImage,
+                          };
+                        })()
+                      : undefined
+                  }
+                >
+                  <ChatMessageList
+                    messages={state.messages}
+                    isStreaming={state.isStreaming}
+                    sessionId={state.sessionId}
+                    language={state.language}
+                    onCopyAssistantMessage={copyAssistantMessage}
+                    onRegenerateMessage={handleRegenerateMessage}
+                    onConfirmOutline={handleConfirmOutline}
+                    onPreviewAttachment={handlePreviewMessageAttachment}
+                    onDeleteTurn={deleteTurn}
+                    selectedBranches={state.selectedBranches}
+                    onEditMessage={editMessage}
+                    onSwitchBranch={switchBranch}
+                    onSubmitUserReply={submitUserReply}
+                    highlightQuery={searchQuery}
+                    activeMatchId={activeMatchId}
+                    matchIds={searchMatchIds}
+                  />
+                  <div ref={messagesEndRef} className="h-px w-full shrink-0" />
+                </div>
+                {hasMessages ? (
+                  <ChatMinimap
+                    messages={visibleNavMessages}
+                    onJump={handleJumpToMessage}
+                  />
+                ) : null}
               </div>
             )}
 
