@@ -11,9 +11,10 @@ export interface ChatMinimapProps {
 }
 
 /**
- * Conversation outline as thin horizontal ticks in the chat pane's right
- * margin (outside the max-width content column). Reference-style gear marks:
- * short = question, longer = answer; hover preview; click to jump.
+ * Thin gear-style ticks centered in the chat pane's **right margin**
+ * (the empty band between the max-w 960px content column and the pane edge).
+ *
+ * Not flush to the viewport edge; not hugging the prose column.
  */
 export default function ChatMinimap({ messages, onJump }: ChatMinimapProps) {
   const { t } = useTranslation();
@@ -30,16 +31,25 @@ export default function ChatMinimap({ messages, onJump }: ChatMinimapProps) {
 
   if (ticks.length === 0) return null;
 
-  // Spacious density — use the right-side empty margin generously.
   const count = ticks.length;
-  const rowH = count > 48 ? 12 : count > 28 ? 14 : count > 16 ? 16 : 18;
+  // Open spacing so the stack reads as a vertical ruler, not a solid bar.
+  const rowH = count > 48 ? 11 : count > 28 ? 13 : count > 16 ? 15 : 18;
 
   return (
     <div
-      className="pointer-events-none absolute inset-y-0 right-0 z-30 hidden w-14 lg:flex items-center justify-end pr-3 xl:pr-5"
+      className="pointer-events-none absolute inset-y-0 z-30 hidden md:flex items-center justify-center"
       aria-label={t("Conversation outline")}
+      style={{
+        // Content column is max-w-[960px] centered. Right gutter width ≈
+        // (100% - 960px) / 2. Center of that gutter sits at half the gutter
+        // from the right edge → (100% - 960px) / 4.
+        // Fallback when the pane is narrower than 960px: sit 2.5rem in.
+        right: "max(2.5rem, calc((100% - 960px) / 4))",
+        width: "3rem",
+        transform: "translateX(50%)",
+      }}
     >
-      <div className="pointer-events-auto flex max-h-[68%] flex-col items-end justify-center">
+      <div className="pointer-events-auto flex max-h-[70%] flex-col items-center justify-center">
         {ticks.map((m) => {
           const isUser = m.role === "user";
           const hovered = hoverId === m.id;
@@ -49,7 +59,7 @@ export default function ChatMinimap({ messages, onJump }: ChatMinimapProps) {
           return (
             <div
               key={m.id}
-              className="relative flex items-center justify-end"
+              className="relative flex items-center justify-center"
               style={{ height: rowH }}
               onMouseEnter={() => setHoverId(m.id)}
               onMouseLeave={() =>
@@ -64,17 +74,17 @@ export default function ChatMinimap({ messages, onJump }: ChatMinimapProps) {
                 onClick={() => onJump(m.id)}
                 onFocus={() => setHoverId(m.id)}
                 onBlur={() => setHoverId((id) => (id === m.id ? null : id))}
-                className="group flex h-full w-12 items-center justify-end"
+                className="group flex h-full w-10 items-center justify-center"
               >
                 <span
                   className={`block h-[3px] rounded-full transition-[width,background-color,opacity,transform] duration-150 ${
                     isUser
                       ? hovered
-                        ? "w-4 scale-y-125 bg-[var(--primary)] opacity-100"
-                        : "w-3 bg-[var(--muted-foreground)]/80 opacity-90 group-hover:bg-[var(--primary)] group-hover:opacity-100"
+                        ? "w-4 scale-y-150 bg-[var(--primary)] opacity-100"
+                        : "w-3 bg-[var(--muted-foreground)] opacity-100 group-hover:bg-[var(--primary)]"
                       : hovered
-                        ? "w-6 scale-y-125 bg-[var(--primary)] opacity-100"
-                        : "w-5 bg-[var(--foreground)]/65 opacity-95 group-hover:bg-[var(--primary)] group-hover:opacity-100"
+                        ? "w-7 scale-y-150 bg-[var(--primary)] opacity-100"
+                        : "w-5 bg-[var(--foreground)]/75 opacity-100 group-hover:bg-[var(--primary)]"
                   }`}
                 />
               </button>
