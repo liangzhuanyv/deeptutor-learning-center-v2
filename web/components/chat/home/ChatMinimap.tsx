@@ -83,14 +83,14 @@ export default function ChatMinimap({ messages, onJump }: ChatMinimapProps) {
                   Hit target is the full row (h = rowH) for easy hover.
                 */}
                 <span
-                  className={`block h-[2px] rounded-full transition-[width,background-color,opacity] duration-150 ${
+                  className={`block h-[3px] rounded-full transition-[width,background-color,opacity] duration-150 ${
                     isUser
                       ? hovered
-                        ? "w-2.5 bg-[var(--primary)] opacity-100"
-                        : "w-2 bg-[var(--muted-foreground)]/70 opacity-80 group-hover:bg-[var(--primary)] group-hover:opacity-100"
+                        ? "w-3 bg-[var(--primary)] opacity-100"
+                        : "w-2.5 bg-[var(--muted-foreground)] opacity-90 group-hover:bg-[var(--primary)] group-hover:opacity-100"
                       : hovered
-                        ? "w-3.5 bg-[var(--primary)] opacity-100"
-                        : "w-3 bg-[var(--muted-foreground)] opacity-90 group-hover:bg-[var(--primary)] group-hover:opacity-100"
+                        ? "w-4 bg-[var(--primary)] opacity-100"
+                        : "w-3.5 bg-[var(--foreground)]/70 opacity-95 group-hover:bg-[var(--primary)] group-hover:opacity-100"
                   }`}
                 />
               </button>
