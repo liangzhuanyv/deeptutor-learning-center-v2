@@ -2665,5 +2665,13 @@
   "Connected to LightRAG server": "Connected to LightRAG server",
   "Core {{version}}": "Core {{version}}",
   "API key accepted": "API key accepted",
-  "Open access": "Open access"
+  "Open access": "Open access",
+  "Search in conversation": "Search in conversation",
+  "Search messages in this chat": "Search messages in this chat",
+  "Search messages in this chat…": "Search messages in this chat…",
+  "Type to search this conversation": "Type to search this conversation",
+  "No matches in this conversation": "No matches in this conversation",
+  "Clear search": "Clear search",
+  "Jump to question": "Jump to question",
+  "Jump to answer": "Jump to answer"
 }
