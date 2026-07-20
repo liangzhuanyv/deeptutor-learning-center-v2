@@ -341,6 +341,7 @@ export default function ChatPage() {
     deleteTurn,
     editMessage,
     switchBranch,
+    applyBranchSelections,
     newSession,
     loadSession,
     renameSessionTitle,
@@ -903,12 +904,7 @@ export default function ChatPage() {
 
       if (!visibleIds.has(messageId)) {
         const selections = selectionsToRevealMessage(state.messages, messageId);
-        if (selections) {
-          for (const [parentKey, childId] of Object.entries(selections)) {
-            const parentId = parentKey === "null" ? null : Number(parentKey);
-            switchBranch(parentId, childId);
-          }
-        }
+        if (selections) applyBranchSelections(selections);
       }
 
       setActiveMatchId(messageId);
@@ -925,7 +921,7 @@ export default function ChatPage() {
         setActiveMatchId((cur) => (cur === messageId ? null : cur));
       }, 1200);
     },
-    [state.messages, state.selectedBranches, switchBranch, messagesContainerRef],
+    [state.messages, state.selectedBranches, applyBranchSelections, messagesContainerRef],
   );
 
   const closeSearch = useCallback(() => {

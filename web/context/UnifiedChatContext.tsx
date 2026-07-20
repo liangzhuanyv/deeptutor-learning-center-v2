@@ -764,6 +764,13 @@ interface ChatContextValue {
   editMessage: (messageId: number, newContent: string) => Promise<void>;
   /** Switch which sibling is currently visible at a branch point. */
   switchBranch: (parentMessageId: number | null, childId: number) => void;
+  /**
+   * Merge a partial parent→child selection map into the current session's
+   * selectedBranches, dispatch once, and persist the full map in a single
+   * updateBranchSelection call. Prefer this over looping switchBranch when
+   * multiple branch points must change together (e.g. search jump).
+   */
+  applyBranchSelections: (partial: Record<string, number>) => void;
   renameSessionTitle: (title: string) => Promise<void>;
   newSession: () => void;
   loadSession: (sessionId: string, signal?: AbortSignal) => Promise<void>;
@@ -1789,6 +1796,33 @@ export function UnifiedChatProvider({
     [],
   );
 
+  const applyBranchSelections = useCallback(
+    (partial: Record<string, number>) => {
+      const currentState = stateRef.current;
+      const key = currentState.selectedKey;
+      if (!key) return;
+      const session = currentState.sessions[key];
+      if (!session) return;
+      const nextSelections = {
+        ...session.selectedBranches,
+        ...partial,
+      };
+      dispatch({
+        type: "REPLACE_SELECTED_BRANCHES",
+        key,
+        selectedBranches: nextSelections,
+      });
+      const sessionId = session.sessionId;
+      if (!sessionId) return;
+      // Fire-and-forget — local state is the source of truth for the UI;
+      // the server copy only matters for reload-time hydration.
+      updateBranchSelection(sessionId, nextSelections).catch((err) => {
+        console.warn("Failed to persist branch selection:", err);
+      });
+    },
+    [],
+  );
+
   const deleteTurn = useCallback(
     async (messageId: number) => {
       const currentState = stateRef.current;
@@ -1844,6 +1878,7 @@ export function UnifiedChatProvider({
       deleteTurn,
       editMessage,
       switchBranch,
+      applyBranchSelections,
       renameSessionTitle,
       newSession,
       loadSession,
@@ -1866,6 +1901,7 @@ export function UnifiedChatProvider({
       deleteTurn,
       editMessage,
       switchBranch,
+      applyBranchSelections,
       renameSessionTitle,
       newSession,
       loadSession,
