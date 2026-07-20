@@ -111,21 +111,52 @@ export function selectionsToRevealMessage(
 
 export function scrollToMessageId(
   messageId: number,
-  options?: { root?: ParentNode | null; behavior?: ScrollBehavior },
+  options?: {
+    root?: ParentNode | null;
+    behavior?: ScrollBehavior;
+    /** Defaults to ``start`` so long answers land at the top, not mid-body. */
+    block?: ScrollLogicalPosition;
+    /** Extra px below the scroller top (clears the chat fade mask). */
+    topOffset?: number;
+  },
 ): boolean {
   if (typeof document === "undefined") return false;
-  const root =
+  const rootNode =
     options?.root ??
     document.querySelector("[data-chat-scroll-root='true']") ??
     document;
-  const el = root.querySelector(
+  const el = rootNode.querySelector(
     `[data-message-id="${CSS.escape(String(messageId))}"]`,
   );
   if (!(el instanceof HTMLElement)) return false;
-  el.scrollIntoView({
-    block: "center",
-    behavior: options?.behavior ?? "smooth",
-  });
+
+  const behavior = options?.behavior ?? "smooth";
+  const block = options?.block ?? "start";
+  const topOffset = options?.topOffset ?? 28;
+
+  // Prefer manual scroll on the chat scroller so ``block: start`` is not
+  // eaten by the top fade mask / nested layout, and long answers open at
+  // their beginning instead of their midpoint.
+  const scrollRoot =
+    options?.root instanceof HTMLElement
+      ? options.root
+      : (document.querySelector(
+          "[data-chat-scroll-root='true']",
+        ) as HTMLElement | null);
+
+  if (scrollRoot instanceof HTMLElement && scrollRoot.contains(el)) {
+    const rootRect = scrollRoot.getBoundingClientRect();
+    const elRect = el.getBoundingClientRect();
+    const delta = elRect.top - rootRect.top - topOffset;
+    if (typeof scrollRoot.scrollBy === "function") {
+      scrollRoot.scrollBy({ top: delta, behavior });
+    } else {
+      scrollRoot.scrollTop += delta;
+    }
+    return true;
+  }
+
+  el.scrollIntoView({ block, behavior });
   return true;
 }
 
