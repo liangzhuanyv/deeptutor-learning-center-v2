@@ -52,6 +52,7 @@ import { hasVisibleMarkdownContent } from "@/lib/markdown-display";
 import type { SelectedBookReference } from "@/lib/book-references";
 import { buildVisiblePath, type SiblingInfo } from "@/lib/message-branches";
 import type { SpaceMemoryFile } from "@/lib/space-items";
+import { splitHighlight } from "@/lib/chat-message-nav";
 import {
   AskUserOptions,
   extractAskUserPayload,
@@ -863,6 +864,9 @@ const UserMessage = memo(function UserMessage({
   editDisabled,
   siblingInfo,
   onSwitchBranch,
+  highlightQuery,
+  activeMatchId,
+  matchIdSet,
 }: {
   msg: ChatMessageItem;
   index: number;
@@ -872,6 +876,9 @@ const UserMessage = memo(function UserMessage({
   editDisabled?: boolean;
   siblingInfo?: SiblingInfo;
   onSwitchBranch?: (parentMessageId: number | null, childId: number) => void;
+  highlightQuery?: string;
+  activeMatchId?: number | null;
+  matchIdSet?: Set<number>;
 }) {
   const { t } = useTranslation();
   const [editing, setEditing] = useState(false);
@@ -1014,8 +1021,20 @@ const UserMessage = memo(function UserMessage({
     ),
   ];
 
+  const isSearchHit = msg.id != null && matchIdSet?.has(msg.id);
+  const isActiveMatch = msg.id != null && activeMatchId === msg.id;
+
   return (
-    <div key={`${msg.role}-${index}`} className="group flex justify-end">
+    <div
+      key={`${msg.role}-${index}`}
+      className={`group flex justify-end ${
+        isActiveMatch
+          ? "rounded-xl ring-2 ring-[var(--primary)]/50 transition-shadow"
+          : ""
+      } ${isSearchHit ? "bg-[var(--primary)]/[0.04]" : ""}`}
+      data-message-id={msg.id != null ? String(msg.id) : undefined}
+      data-search-hit={isSearchHit ? "true" : undefined}
+    >
       <div className="flex max-w-[75%] flex-col items-end gap-1.5">
         <div className="flex justify-end pr-1">
           <span className="text-[10px] tracking-wide text-[var(--muted-foreground)]">
@@ -1065,7 +1084,22 @@ const UserMessage = memo(function UserMessage({
           </div>
         ) : (
           <div className="rounded-2xl bg-[var(--secondary)] px-4 py-2.5 text-[14px] leading-relaxed text-[var(--foreground)] shadow-sm">
-            <div className="whitespace-pre-wrap">{msg.content}</div>
+            <div className="whitespace-pre-wrap">
+              {highlightQuery?.trim()
+                ? splitHighlight(msg.content, highlightQuery).map((part, i) =>
+                    part.hit ? (
+                      <mark
+                        key={i}
+                        className="rounded-sm bg-[var(--primary)]/25 text-inherit"
+                      >
+                        {part.text}
+                      </mark>
+                    ) : (
+                      <span key={i}>{part.text}</span>
+                    ),
+                  )
+                : msg.content}
+            </div>
           </div>
         )}
         {!editing && refTreeItems.length > 0 && (
@@ -1121,6 +1155,9 @@ export const ChatMessageList = memo(function ChatMessageList({
   onEditMessage,
   onSwitchBranch,
   onSubmitUserReply,
+  highlightQuery,
+  activeMatchId,
+  matchIds,
 }: {
   messages: ChatMessageItem[];
   isStreaming: boolean;
@@ -1156,8 +1193,15 @@ export const ChatMessageList = memo(function ChatMessageList({
           answers?: Array<{ questionId: string; text: string }>;
         },
   ) => void;
+  highlightQuery?: string;
+  activeMatchId?: number | null;
+  matchIds?: Set<number> | number[];
 }) {
   const { t } = useTranslation();
+  const matchIdSet = useMemo(() => {
+    if (!matchIds) return new Set<number>();
+    return matchIds instanceof Set ? matchIds : new Set(matchIds);
+  }, [matchIds]);
   // Visible path: when no branching has happened the result is identical
   // to the input. After an edit, sibling branches are filtered out so the
   // UI shows exactly one continuous thread, with arrow nav exposed on the
@@ -1336,6 +1380,9 @@ export const ChatMessageList = memo(function ChatMessageList({
               editDisabled={isStreaming}
               siblingInfo={sib}
               onSwitchBranch={onSwitchBranch}
+              highlightQuery={highlightQuery}
+              activeMatchId={activeMatchId}
+              matchIdSet={matchIdSet}
             />
           );
         }
@@ -1377,7 +1424,22 @@ export const ChatMessageList = memo(function ChatMessageList({
         })();
 
         return (
-          <div key={`${msg.role}-${i}`} className="w-full">
+          <div
+            key={`${msg.role}-${i}`}
+            className={`w-full ${
+              msg.id != null && activeMatchId === msg.id
+                ? "rounded-xl ring-2 ring-[var(--primary)]/50"
+                : ""
+            } ${
+              msg.id != null && matchIdSet.has(msg.id)
+                ? "bg-[var(--primary)]/[0.03]"
+                : ""
+            }`}
+            data-message-id={msg.id != null ? String(msg.id) : undefined}
+            data-search-hit={
+              msg.id != null && matchIdSet.has(msg.id) ? "true" : undefined
+            }
+          >
             <InlineFileCardProvider
               attachments={msg.attachments ?? []}
               events={msg.events}
