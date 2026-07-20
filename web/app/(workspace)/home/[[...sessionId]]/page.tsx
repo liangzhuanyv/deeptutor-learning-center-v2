@@ -1861,7 +1861,7 @@ export default function ChatPage() {
           // hand-tune it without fighting Tailwind's arbitrary-value parser.
           data-preview-open={previewSource ? "true" : "false"}
           data-viewer-open={viewerPanelOpen ? "true" : "false"}
-          className="chat-preview-shell flex h-full flex-col overflow-hidden bg-[var(--background)]"
+          className="chat-preview-shell relative flex h-full flex-col overflow-hidden bg-[var(--background)]"
         >
           <div className="mx-auto flex w-full max-w-[960px] flex-wrap items-center justify-between gap-x-3 gap-y-1.5 px-6 pt-3 pb-0">
             <div className="group/title min-w-0 flex flex-1 items-center gap-2">
@@ -2019,12 +2019,6 @@ export default function ChatPage() {
                   />
                   <div ref={messagesEndRef} className="h-px w-full shrink-0" />
                 </div>
-                {hasMessages ? (
-                  <ChatMinimap
-                    messages={visibleNavMessages}
-                    onJump={handleJumpToMessage}
-                  />
-                ) : null}
               </div>
             )}
 
@@ -2164,6 +2158,12 @@ export default function ChatPage() {
             onClose={() => setViewerOpen(false)}
             onAutoOpen={() => setViewerOpen(true)}
           />
+          {hasMessages ? (
+            <ChatMinimap
+              messages={visibleNavMessages}
+              onJump={handleJumpToMessage}
+            />
+          ) : null}
         </div>
       </GeogebraTabProvider>
     </QuizFollowupProvider>

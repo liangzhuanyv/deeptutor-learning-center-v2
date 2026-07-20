@@ -11,13 +11,9 @@ export interface ChatMinimapProps {
 }
 
 /**
- * Right-edge conversation outline — thin horizontal ticks (reference-style
- * "gear" / ruler marks), not a thick scrollbar rail.
- *
- * - One tick per user message, one per assistant message
- * - User ticks shorter/lighter; assistant ticks longer/slightly brighter
- * - Hover shows a floating preview card to the left of that tick
- * - Click jumps to the message
+ * Conversation outline as thin horizontal ticks in the chat pane's right
+ * margin (outside the max-width content column). Reference-style gear marks:
+ * short = question, longer = answer; hover preview; click to jump.
  */
 export default function ChatMinimap({ messages, onJump }: ChatMinimapProps) {
   const { t } = useTranslation();
@@ -34,29 +30,21 @@ export default function ChatMinimap({ messages, onJump }: ChatMinimapProps) {
 
   if (ticks.length === 0) return null;
 
-  // Compress spacing as the thread grows so the stack stays centered and
-  // readable without becoming a solid bar.
+  // Spacious density — use the right-side empty margin generously.
   const count = ticks.length;
-  const rowH = count > 50 ? 8 : count > 28 ? 10 : count > 14 ? 12 : 14;
+  const rowH = count > 48 ? 12 : count > 28 ? 14 : count > 16 ? 16 : 18;
 
   return (
     <div
-      className="pointer-events-none absolute inset-y-0 right-0 z-30 hidden w-5 md:flex items-center justify-end"
+      className="pointer-events-none absolute inset-y-0 right-0 z-30 hidden w-14 lg:flex items-center justify-end pr-3 xl:pr-5"
       aria-label={t("Conversation outline")}
     >
-      {/*
-        No pill / rail background. Ticks sit flush on the content edge like
-        the reference gear marks — only the marks themselves are visible.
-      */}
-      <div
-        className="pointer-events-auto flex max-h-[70%] flex-col items-end justify-center py-1"
-        style={{ gap: 0 }}
-      >
+      <div className="pointer-events-auto flex max-h-[68%] flex-col items-end justify-center">
         {ticks.map((m) => {
           const isUser = m.role === "user";
           const hovered = hoverId === m.id;
           const plain = messagePlainText(m.content);
-          const preview = plain.slice(0, 96);
+          const preview = plain.slice(0, 100);
 
           return (
             <div
@@ -76,21 +64,17 @@ export default function ChatMinimap({ messages, onJump }: ChatMinimapProps) {
                 onClick={() => onJump(m.id)}
                 onFocus={() => setHoverId(m.id)}
                 onBlur={() => setHoverId((id) => (id === m.id ? null : id))}
-                className="group flex h-full w-5 items-center justify-end pr-[3px]"
+                className="group flex h-full w-12 items-center justify-end"
               >
-                {/*
-                  Visible mark only — thin horizontal tick.
-                  Hit target is the full row (h = rowH) for easy hover.
-                */}
                 <span
-                  className={`block h-[3px] rounded-full transition-[width,background-color,opacity] duration-150 ${
+                  className={`block h-[3px] rounded-full transition-[width,background-color,opacity,transform] duration-150 ${
                     isUser
                       ? hovered
-                        ? "w-3 bg-[var(--primary)] opacity-100"
-                        : "w-2.5 bg-[var(--muted-foreground)] opacity-90 group-hover:bg-[var(--primary)] group-hover:opacity-100"
+                        ? "w-4 scale-y-125 bg-[var(--primary)] opacity-100"
+                        : "w-3 bg-[var(--muted-foreground)]/80 opacity-90 group-hover:bg-[var(--primary)] group-hover:opacity-100"
                       : hovered
-                        ? "w-4 bg-[var(--primary)] opacity-100"
-                        : "w-3.5 bg-[var(--foreground)]/70 opacity-95 group-hover:bg-[var(--primary)] group-hover:opacity-100"
+                        ? "w-6 scale-y-125 bg-[var(--primary)] opacity-100"
+                        : "w-5 bg-[var(--foreground)]/65 opacity-95 group-hover:bg-[var(--primary)] group-hover:opacity-100"
                   }`}
                 />
               </button>
@@ -98,14 +82,14 @@ export default function ChatMinimap({ messages, onJump }: ChatMinimapProps) {
               {hovered && preview ? (
                 <div
                   role="tooltip"
-                  className="pointer-events-none absolute right-full top-1/2 z-40 mr-2 w-[240px] -translate-y-1/2 rounded-lg border border-[var(--border)] bg-[var(--card)] px-2.5 py-2 text-left shadow-lg"
+                  className="pointer-events-none absolute right-full top-1/2 z-40 mr-3 w-[260px] -translate-y-1/2 rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 py-2.5 text-left shadow-xl"
                 >
-                  <div className="mb-0.5 text-[10px] font-medium tracking-wide text-[var(--muted-foreground)]">
+                  <div className="mb-1 text-[10px] font-medium tracking-wide text-[var(--muted-foreground)]">
                     {isUser ? t("Question") : t("Answer")}
                   </div>
-                  <div className="line-clamp-3 text-[12px] leading-snug text-[var(--foreground)]">
+                  <div className="line-clamp-4 text-[12.5px] leading-relaxed text-[var(--foreground)]">
                     {preview}
-                    {plain.length > 96 ? "…" : ""}
+                    {plain.length > 100 ? "…" : ""}
                   </div>
                 </div>
               ) : null}
