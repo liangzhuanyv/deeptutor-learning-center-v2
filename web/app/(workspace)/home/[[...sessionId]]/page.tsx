@@ -934,12 +934,12 @@ export default function ChatPage() {
     if (!searchOpen) return;
     const onPointer = (e: MouseEvent) => {
       if (!searchWrapRef.current?.contains(e.target as Node)) {
-        setSearchOpen(false);
+        closeSearch();
       }
     };
     document.addEventListener("mousedown", onPointer);
     return () => document.removeEventListener("mousedown", onPointer);
-  }, [searchOpen]);
+  }, [searchOpen, closeSearch]);
 
   /* ---- URL-driven session loading ---- */
 
@@ -1922,7 +1922,10 @@ export default function ChatPage() {
               />
               <div ref={searchWrapRef} className="relative">
                 <HeaderActionButton
-                  onClick={() => setSearchOpen((v) => !v)}
+                  onClick={() => {
+                    if (searchOpen) closeSearch();
+                    else setSearchOpen(true);
+                  }}
                   active={searchOpen}
                   disabled={!state.messages.length}
                   icon={Search}
