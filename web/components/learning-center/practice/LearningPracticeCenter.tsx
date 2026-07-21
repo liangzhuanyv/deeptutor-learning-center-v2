@@ -233,17 +233,22 @@ export default function LearningPracticeCenter() {
     finally { setWorking(false); }
   };
 
-  const start = async () => {
+  const start = async (useCurrentPreview = false) => {
     if (!projectId) return;
     setWorking(true); setError(null);
     try {
-      let activeProposal = proposal;
-      // If user did not preview, build a proposal first so start can pin the exact set.
+      // Always re-compose unless the user just clicked 预览 and we deliberately
+      // pin that exact set. Reusing a stale proposal after a previous session
+      // was the main "same 30 questions again" bug.
+      let activeProposal = useCurrentPreview ? proposal : null;
       if (!activeProposal || activeProposal.project_id !== projectId) {
         activeProposal = await getPracticeProposal(formInput());
         setProposal(activeProposal);
       }
       const questionIds = activeProposal.questions.map((item) => item.question_id);
+      if (!questionIds.length) {
+        throw new Error("当前筛选下没有可抽的新题（可能都练过或抽过了）");
+      }
       const next = await startPracticeSession({
         ...formInput(),
         mode,
@@ -252,6 +257,8 @@ export default function LearningPracticeCenter() {
         limit: questionIds.length || limit,
       });
       setSession(next);
+      // Drop proposal so the next round cannot pin the same ids by accident.
+      setProposal(null);
       setDrafts(Object.fromEntries(next.questions.map((item) => [item.id, toDraft(item)])));
       setCurrentIndex(0); setDirty(false); setReport(null);
       router.replace(`/space/learning-center/practice?sessionId=${encodeURIComponent(next.id)}`);
@@ -444,12 +451,12 @@ export default function LearningPracticeCenter() {
             <label className="text-sm">模块<select value={moduleId} onChange={(event) => setModuleId(event.target.value)} className="mt-1.5 w-full rounded-lg border border-[var(--border)] bg-transparent px-3 py-2"><option value="">全部模块</option>{modules.map((module) => <option key={module.id} value={module.id}>{module.path || module.name}</option>)}</select></label>
             <label className="text-sm">知识点<select value={knowledgePointId} onChange={(event) => setKnowledgePointId(event.target.value)} className="mt-1.5 w-full rounded-lg border border-[var(--border)] bg-transparent px-3 py-2"><option value="">全部知识点</option>{knowledgePoints.filter((point) => !moduleId || point.module_id === moduleId).map((point) => <option key={point.id} value={point.id}>{point.name}</option>)}</select></label>
             <label className="text-sm">难度<select value={difficulty} onChange={(event) => setDifficulty(event.target.value)} className="mt-1.5 w-full rounded-lg border border-[var(--border)] bg-transparent px-3 py-2"><option value="">全部难度</option><option value="easy">简单</option><option value="medium">中等</option><option value="hard">困难</option></select></label>
-            <label className="text-sm">训练状态<select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="mt-1.5 w-full rounded-lg border border-[var(--border)] bg-transparent px-3 py-2"><option value="unseen">优先未作答</option><option value="">全部题目（已练过也抽）</option><option value="wrong">错题</option><option value="review_due">待复习</option></select></label>
+            <label className="text-sm">训练状态<select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="mt-1.5 w-full rounded-lg border border-[var(--border)] bg-transparent px-3 py-2"><option value="unseen">只抽新题（未抽过/未作答）</option><option value="">全部题目（含已抽过）</option><option value="wrong">错题</option><option value="review_due">待复习</option></select></label>
             <div className="text-sm"><span>题量</span><div className="mt-1.5 flex flex-wrap gap-2">{PRESETS.map((value) => <button type="button" key={value} onClick={() => setLimit(value)} className={`rounded-lg border px-3 py-2 text-xs ${limit === value ? "border-sky-500 bg-sky-500 text-white" : "border-[var(--border)]"}`}>{value} 题</button>)}</div></div>
           </div>
           <div className="mt-5 flex flex-wrap items-center gap-2"><span className="text-sm">模式</span>{(["learning", "exam"] as PracticeMode[]).map((value) => <button type="button" key={value} onClick={() => setMode(value)} className={`rounded-lg border px-3 py-2 text-sm ${mode === value ? "border-sky-500 bg-sky-500 text-white" : "border-[var(--border)]"}`}>{value === "learning" ? "学习模式（即时判题）" : "考试模式（交卷后解析）"}</button>)}</div>
           {mode === "exam" && <div className="mt-4 flex flex-wrap items-center gap-2 text-sm"><Clock3 size={15} /> 时限 {TIME_PRESETS.map((value) => <button type="button" key={String(value)} onClick={() => setTimeBudget(value)} className={`rounded-lg border px-3 py-1.5 text-xs ${timeBudget === value ? "border-sky-500 bg-sky-500 text-white" : "border-[var(--border)]"}`}>{value ? `${value} 分钟` : "不限时"}</button>)}</div>}
-          <div className="mt-6 flex gap-3"><button type="button" onClick={() => void preview()} disabled={working || !projectId} className="rounded-lg border border-[var(--border)] px-4 py-2 text-sm disabled:opacity-50">预览组成</button><button type="button" onClick={() => void start()} disabled={working || !projectId} className="inline-flex items-center gap-2 rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">{working && <Loader2 className="animate-spin" size={16} />}开始{mode === "learning" ? "学习" : "考试"}</button></div>
+          <div className="mt-6 flex flex-wrap gap-3"><button type="button" onClick={() => void preview()} disabled={working || !projectId} className="rounded-lg border border-[var(--border)] px-4 py-2 text-sm disabled:opacity-50">预览组成</button>{proposal && <button type="button" onClick={() => void start(true)} disabled={working || !projectId} className="rounded-lg border border-sky-500 px-4 py-2 text-sm text-sky-700 dark:text-sky-300 disabled:opacity-50">按预览开练</button>}<button type="button" onClick={() => void start(false)} disabled={working || !projectId} className="inline-flex items-center gap-2 rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">{working && <Loader2 className="animate-spin" size={16} />}抽取新题并开始{mode === "learning" ? "学习" : "考试"}</button></div>
         </section>
         <aside className="rounded-2xl border border-[var(--border)] bg-[var(--card)] p-5"><h2 className="font-semibold">智能组成预览</h2>{proposal ? <div className="mt-4 space-y-4 text-sm"><p><strong>{proposal.candidate_count.toLocaleString()}</strong> 道候选题，将选取 <strong>{proposal.selected_count}</strong> 道{typeof proposal.unseen_selected_count === "number" ? <>（未作答 <strong>{proposal.unseen_selected_count}</strong>，已作答 <strong>{proposal.seen_selected_count ?? 0}</strong>）</> : null}。</p><div><p className="text-xs text-[var(--muted-foreground)]">题型</p><div className="mt-1 flex flex-wrap gap-1">{Object.entries(proposal.composition.question_types).map(([name, count]) => <span key={name} className="rounded bg-[var(--muted)] px-2 py-1 text-xs">{name} {count}</span>)}</div></div><div><p className="text-xs text-[var(--muted-foreground)]">模块</p><div className="mt-1 space-y-1">{Object.entries(proposal.composition.modules).slice(0, 5).map(([name, count]) => <p key={name} className="flex justify-between text-xs"><span className="truncate">{name}</span><span>{count}</span></p>)}</div></div></div> : <p className="mt-4 text-sm text-[var(--muted-foreground)]">选择范围后查看候选题和题型分布。</p>}</aside>
       </div>}

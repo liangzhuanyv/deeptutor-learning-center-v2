@@ -78,7 +78,13 @@ class LearningPracticeService:
             where.append("q.difficulty = ?")
             params.append(normalized_difficulty)
         if normalized_status == "unseen":
-            where.append("NOT EXISTS (SELECT 1 FROM attempts a WHERE a.question_id = q.id)")
+            # "未作答/未抽过": exclude anything already graded OR already placed in a
+            # practice session. Users abandon sessions without submitting; those
+            # questions must not reappear as "new" on the next compose.
+            where.append(
+                "NOT EXISTS (SELECT 1 FROM attempts a WHERE a.question_id = q.id) "
+                "AND NOT EXISTS (SELECT 1 FROM practice_session_items psi WHERE psi.question_id = q.id)"
+            )
         elif normalized_status == "wrong":
             where.append("EXISTS (SELECT 1 FROM wrong_question_states w WHERE w.question_id = q.id AND w.wrong_count > 0)")
         elif normalized_status:
@@ -116,14 +122,15 @@ class LearningPracticeService:
         with self.repository._connect() as conn:
             self.repository._require_project(conn, project_id)
             candidate_count = int(conn.execute(f"SELECT COUNT(*) FROM questions q WHERE {clause}", params).fetchone()[0])
-            # Prefer never-attempted questions, then least-attempted, then
-            # oldest last attempt. RANDOM() breaks ties so re-running the same
-            # scope does not always return the same first N by id.
+            # Prefer never-drawn, then never-attempted, then least-attempted,
+            # then oldest last attempt. RANDOM() only breaks true ties so the
+            # same scope does not freeze on fixed first-N by id.
             rows = conn.execute(
                 f"""SELECT q.id, q.question_type, q.stem, q.module_id, q.difficulty,
                            COALESCE(m.path, '') AS module_path,
                            COALESCE(stats.attempt_count, 0) AS attempt_count,
-                           stats.last_attempt_at AS last_attempt_at
+                           stats.last_attempt_at AS last_attempt_at,
+                           COALESCE(drawn.drawn_count, 0) AS drawn_count
                     FROM questions q
                     LEFT JOIN content_modules m ON m.id = q.module_id
                     LEFT JOIN (
@@ -133,8 +140,14 @@ class LearningPracticeService:
                         FROM attempts
                         GROUP BY question_id
                     ) stats ON stats.question_id = q.id
+                    LEFT JOIN (
+                        SELECT question_id, COUNT(*) AS drawn_count
+                        FROM practice_session_items
+                        GROUP BY question_id
+                    ) drawn ON drawn.question_id = q.id
                     WHERE {clause}
-                    ORDER BY COALESCE(stats.attempt_count, 0) ASC,
+                    ORDER BY COALESCE(drawn.drawn_count, 0) ASC,
+                             COALESCE(stats.attempt_count, 0) ASC,
                              COALESCE(stats.last_attempt_at, 0) ASC,
                              RANDOM()
                     LIMIT ?""",
@@ -158,6 +171,7 @@ class LearningPracticeService:
                 "module_path": row["module_path"],
                 "difficulty": row["difficulty"],
                 "attempt_count": int(row["attempt_count"] or 0),
+                "drawn_count": int(row["drawn_count"] or 0) if "drawn_count" in row.keys() else 0,
             }
             for row in rows
         ]

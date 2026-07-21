@@ -216,3 +216,48 @@ def test_list_resumable_hides_empty_zombies(tmp_path: Path) -> None:
     assert archived["archived_count"] >= 1
     empty_after = service.get(empty["id"])
     assert empty_after["status"] == "abandoned"
+
+
+
+def test_unseen_excludes_previously_drawn_session_items(tmp_path: Path) -> None:
+    """Questions placed in a session but never submitted must not reappear as unseen."""
+    repo = LearningCenterRepository(tmp_path / "learning_center.db")
+    ids = _seed(repo)
+    service = LearningPracticeService(repo)
+    source = repo.create_content_source(project_id=ids["project"], source_type="fixture")
+    bank = repo.create_bank(project_id=ids["project"], source_id=source["id"], name="Pool")
+    version = repo.create_bank_version(bank_id=bank["id"], source_id=source["id"], version="v1")
+    extras = [
+        repo.create_question(
+            project_id=ids["project"], bank_id=bank["id"], bank_version_id=version["id"],
+            module_id=ids["module"], source_id=source["id"], stem=f"Extra {i}",
+            options={"A": "1", "B": "2"}, source_answer="A",
+            knowledge_point_ids=[ids["knowledge"]],
+        )["id"]
+        for i in range(3)
+    ]
+
+    first = service.start(
+        project_id=ids["project"],
+        mode="learning",
+        question_ids=[ids["first"], ids["second"]],
+        limit=2,
+    )
+    drawn = {q["question_id"] for q in first["questions"]}
+    assert drawn == {ids["first"], ids["second"]}
+
+    # No attempts yet — old logic would still call these unseen.
+    with repo._connect() as conn:
+        attempts = conn.execute("SELECT COUNT(*) FROM attempts").fetchone()[0]
+    assert attempts == 0
+
+    unseen = service.propose(project_id=ids["project"], status="unseen", limit=50)
+    unseen_ids = {q["question_id"] for q in unseen["questions"]}
+    assert drawn.isdisjoint(unseen_ids)
+    assert set(extras).issubset(unseen_ids)
+
+    # Starting another random propose with unseen must not reuse them.
+    second = service.start(project_id=ids["project"], mode="learning", status="unseen", limit=2)
+    second_ids = {q["question_id"] for q in second["questions"]}
+    assert drawn.isdisjoint(second_ids)
+    assert second_ids.issubset(set(extras))
