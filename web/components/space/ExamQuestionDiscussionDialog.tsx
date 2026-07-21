@@ -1,5 +1,6 @@
 "use client";
 
+import ExamRichText from "@/components/learning-center/ExamRichText";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Bot,
@@ -154,7 +155,7 @@ export default function ExamQuestionDiscussionDialog({
                 <span className="rounded-full bg-[var(--muted)] px-2 py-0.5">{detail.question_type}</span>
                 <span className="rounded-full bg-red-500/10 px-2 py-0.5 text-red-600">错 {detail.wrong_book?.wrong_count ?? 0} 次</span>
               </div>
-              <h3 className="mt-4 text-[16px] font-medium leading-relaxed text-[var(--foreground)]">{detail.stem}</h3>
+              <ExamRichText as="h3" className="mt-4 text-[16px] font-medium leading-relaxed text-[var(--foreground)]" text={detail.stem} />
               <div className="mt-5 space-y-2">
                 {sortedOptions(detail).map(([key, option]) => {
                   const isAnswer = detail.source_answer.includes(key);
@@ -170,7 +171,7 @@ export default function ExamQuestionDiscussionDialog({
                       <span className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold ${isAnswer ? "bg-emerald-500 text-white" : "bg-[var(--muted)] text-[var(--muted-foreground)]"}`}>
                         {isAnswer ? <CheckCircle2 size={13} /> : key}
                       </span>
-                      <span className="leading-relaxed text-[var(--foreground)]">{option}</span>
+                      <ExamRichText as="span" className="leading-relaxed text-[var(--foreground)]" text={option} />
                     </div>
                   );
                 })}
@@ -178,7 +179,7 @@ export default function ExamQuestionDiscussionDialog({
               <div className="mt-5 rounded-xl border border-emerald-500/25 bg-emerald-500/[0.045] p-4">
                 <p className="text-[12px] font-medium text-emerald-700 dark:text-emerald-300">标准答案：{detail.source_answer || "待 AI 复核"}</p>
                 <p className="mt-3 text-[12px] font-medium text-[var(--muted-foreground)]">解析</p>
-                <p className="mt-1.5 whitespace-pre-wrap text-[13px] leading-relaxed text-[var(--foreground)]">{explanation}</p>
+                <ExamRichText className="mt-1.5 text-[13px] leading-relaxed text-[var(--foreground)]" text={explanation} />
                 {!detail.source_explanation && detail.ai_explanation && (
                   <span className="mt-3 inline-flex items-center gap-1 text-[11px] text-violet-600 dark:text-violet-300">
                     <Sparkles size={12} /> Gemini 补充解析
