@@ -337,17 +337,24 @@ export interface PracticeProposalQuestion {
   question_id: string;
   question_type: string;
   stem: string;
-  module_id: string | null;
-  module_path: string;
-  difficulty: string;
+  module_id?: string | null;
+  module_path?: string;
+  difficulty?: string | null;
+  attempt_count?: number;
 }
 
 export interface PracticeProposal {
   project_id: string;
   candidate_count: number;
   selected_count: number;
+  unseen_selected_count?: number;
+  seen_selected_count?: number;
   filters: PracticeProposalInput & { limit: number };
-  composition: { question_types: Record<string, number>; difficulties: Record<string, number>; modules: Record<string, number> };
+  composition: {
+    question_types: Record<string, number>;
+    difficulties: Record<string, number>;
+    modules: Record<string, number>;
+  };
   questions: PracticeProposalQuestion[];
 }
 

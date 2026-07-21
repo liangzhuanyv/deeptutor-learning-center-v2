@@ -114,3 +114,55 @@ def test_pause_resume_report_bookmark_and_discussion(tmp_path: Path) -> None:
     assert report["total"] == 2
     assert report["answered"] == 2
     assert "confidence" in report and "follow_up_actions" in report
+
+
+def test_propose_prefers_unseen_over_already_attempted(tmp_path: Path) -> None:
+    """After finishing a session, the next propose should not re-pick the same
+    fixed first-N-by-id set when unseen questions remain in scope."""
+    repo = LearningCenterRepository(tmp_path / "learning_center.db")
+    ids = _seed(repo)
+    service = LearningPracticeService(repo)
+
+    # Seed three extra questions so scope has 5 total (first, second + 3).
+    source = repo.create_content_source(project_id=ids["project"], source_type="fixture")
+    bank = repo.create_bank(project_id=ids["project"], source_id=source["id"], name="Extra")
+    version = repo.create_bank_version(bank_id=bank["id"], source_id=source["id"], version="v1")
+    extras = []
+    for stem in ("Extra 3", "Extra 4", "Extra 5"):
+        extras.append(
+            repo.create_question(
+                project_id=ids["project"],
+                bank_id=bank["id"],
+                bank_version_id=version["id"],
+                module_id=ids["module"],
+                source_id=source["id"],
+                stem=stem,
+                options={"A": "1", "B": "2"},
+                source_answer="A",
+                knowledge_point_ids=[ids["knowledge"]],
+            )["id"]
+        )
+
+    first_session = service.start(project_id=ids["project"], mode="learning", module_id=ids["module"], limit=2)
+    first_ids = {q["question_id"] for q in first_session["questions"]}
+    assert len(first_ids) == 2
+
+    # Submit both so they become "seen".
+    service.submit(
+        first_session["id"],
+        [{"id": item["id"], "user_answer": "A", "confidence": "sure"} for item in first_session["questions"]],
+        finish=True,
+    )
+
+    second = service.propose(project_id=ids["project"], module_id=ids["module"], limit=2)
+    second_ids = {q["question_id"] for q in second["questions"]}
+    assert second["selected_count"] == 2
+    assert second["unseen_selected_count"] == 2
+    assert second["seen_selected_count"] == 0
+    # Must not re-select the already-attempted pair while unseen remain.
+    assert first_ids.isdisjoint(second_ids)
+
+    # Explicit unseen filter only returns never-attempted questions.
+    unseen = service.propose(project_id=ids["project"], module_id=ids["module"], status="unseen", limit=50)
+    assert all(q["attempt_count"] == 0 for q in unseen["questions"])
+    assert first_ids.isdisjoint({q["question_id"] for q in unseen["questions"]})

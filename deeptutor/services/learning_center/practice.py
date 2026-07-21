@@ -116,13 +116,27 @@ class LearningPracticeService:
         with self.repository._connect() as conn:
             self.repository._require_project(conn, project_id)
             candidate_count = int(conn.execute(f"SELECT COUNT(*) FROM questions q WHERE {clause}", params).fetchone()[0])
+            # Prefer never-attempted questions, then least-attempted, then
+            # oldest last attempt. RANDOM() breaks ties so re-running the same
+            # scope does not always return the same first N by id.
             rows = conn.execute(
                 f"""SELECT q.id, q.question_type, q.stem, q.module_id, q.difficulty,
-                           COALESCE(m.path, '') AS module_path
+                           COALESCE(m.path, '') AS module_path,
+                           COALESCE(stats.attempt_count, 0) AS attempt_count,
+                           stats.last_attempt_at AS last_attempt_at
                     FROM questions q
                     LEFT JOIN content_modules m ON m.id = q.module_id
+                    LEFT JOIN (
+                        SELECT question_id,
+                               COUNT(*) AS attempt_count,
+                               MAX(submitted_at) AS last_attempt_at
+                        FROM attempts
+                        GROUP BY question_id
+                    ) stats ON stats.question_id = q.id
                     WHERE {clause}
-                    ORDER BY q.id
+                    ORDER BY COALESCE(stats.attempt_count, 0) ASC,
+                             COALESCE(stats.last_attempt_at, 0) ASC,
+                             RANDOM()
                     LIMIT ?""",
                 [*params, limit],
             ).fetchall()
@@ -143,6 +157,7 @@ class LearningPracticeService:
                 "module_id": row["module_id"],
                 "module_path": row["module_path"],
                 "difficulty": row["difficulty"],
+                "attempt_count": int(row["attempt_count"] or 0),
             }
             for row in rows
         ]
@@ -153,12 +168,19 @@ class LearningPracticeService:
             types[row["question_type"] or "other"] += row["count"]
             difficulties[row["difficulty"] or "unspecified"] += row["count"]
             modules[row["module_path"]] += row["count"]
+        unseen_count = sum(1 for item in selected if item["attempt_count"] == 0)
         return {
             "project_id": project_id,
             "candidate_count": candidate_count,
             "selected_count": len(selected),
+            "unseen_selected_count": unseen_count,
+            "seen_selected_count": len(selected) - unseen_count,
             "filters": {**filters, "limit": limit},
-            "composition": {"question_types": dict(types), "difficulties": dict(difficulties), "modules": dict(modules)},
+            "composition": {
+                "question_types": dict(types),
+                "difficulties": dict(difficulties),
+                "modules": dict(modules),
+            },
             "questions": selected,
         }
 
