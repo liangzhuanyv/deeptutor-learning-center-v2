@@ -519,6 +519,18 @@ export function addPracticeDiscussion(projectId: string, questionId: string, con
   return request(`/practice/questions/${encodeURIComponent(questionId)}/discussion`, { method: "POST", body: JSON.stringify({ project_id: projectId, content }) });
 }
 
+export function discussLearningQuestion(
+  projectId: string,
+  questionId: string,
+  message: string,
+  history: Array<{ role: "user" | "assistant"; content: string }> = [],
+): Promise<{ reply: string; discussion: PracticeDiscussion }> {
+  return request(`/practice/questions/${encodeURIComponent(questionId)}/ai-discussion`, {
+    method: "POST",
+    body: JSON.stringify({ project_id: projectId, message, history }),
+  });
+}
+
 export interface ReviewQueueItem {
   question_id: string;
   stem: string;

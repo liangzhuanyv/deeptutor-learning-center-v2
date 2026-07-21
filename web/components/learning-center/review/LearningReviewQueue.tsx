@@ -7,6 +7,7 @@ import { CheckCircle2, Loader2, RefreshCw, RotateCcw, ShieldCheck, Target } from
 
 import LearningCenterNav from "@/components/learning-center/LearningCenterNav";
 import ExamRichText from "@/components/learning-center/ExamRichText";
+import LearningQuestionAIDiscussion from "@/components/learning-center/LearningQuestionAIDiscussion";
 import SpaceSectionHeader from "@/components/space/SpaceSectionHeader";
 import {
   getLearningProjects,
@@ -227,6 +228,13 @@ export default function LearningReviewQueue() {
                 <button type="button" onClick={() => void override(false)} className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm">
                   重新纳入复习
                 </button>
+              </div>
+              <div className="mt-5">
+                <LearningQuestionAIDiscussion
+                  projectId={projectId}
+                  questionId={selected.question.id}
+                  stem={selected.question.stem}
+                />
               </div>
             </>
           ) : (

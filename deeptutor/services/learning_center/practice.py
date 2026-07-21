@@ -761,7 +761,73 @@ class LearningPracticeService:
             messages = [dict(row) for row in conn.execute("SELECT * FROM question_discussion_messages WHERE discussion_id = ? ORDER BY created_at", (discussion["id"],))]
             return {"id": discussion["id"], "project_id": project_id, "question_id": question_id, "title": discussion["title"], "messages": messages}
 
-    def add_discussion_message(self, *, project_id: str, question_id: str, content: str, role: str = "user") -> dict[str, Any]:
+
+    def question_discussion_context(self, *, project_id: str, question_id: str) -> dict[str, Any]:
+        """Load a single question with options + best available explanation for AI tutoring."""
+        with self.repository._connect() as conn:
+            row = conn.execute(
+                """SELECT q.*, COALESCE(m.path, '') AS module_path,
+                          (SELECT json_group_object(option_key, content)
+                             FROM question_options o WHERE o.question_id = q.id) AS options_json,
+                          (
+                            SELECT d.output_json FROM ai_derivations d
+                            WHERE d.question_id = q.id
+                              AND d.derivation_type IN (
+                                'explanation', 'source_explanation', 'ai_explanation',
+                                'missing_explanation', 'enrich_explanation'
+                              )
+                            ORDER BY
+                              CASE d.review_status WHEN 'accepted' THEN 0 WHEN 'unreviewed' THEN 1 ELSE 2 END,
+                              d.created_at DESC
+                            LIMIT 1
+                          ) AS ai_explanation_json
+                   FROM questions q
+                   LEFT JOIN content_modules m ON m.id = q.module_id
+                   WHERE q.id = ? AND q.project_id = ?""",
+                (question_id, project_id),
+            ).fetchone()
+            if row is None:
+                raise LearningCenterNotFoundError("Question not found")
+            options = _json(row["options_json"], {})
+            source_explanation = clean_text(row["source_explanation"] or "")
+            ai_payload = _json(row["ai_explanation_json"], {})
+            ai_explanation = ""
+            if isinstance(ai_payload, dict):
+                ai_explanation = clean_text(
+                    str(
+                        ai_payload.get("explanation")
+                        or ai_payload.get("source_explanation")
+                        or ai_payload.get("text")
+                        or ai_payload.get("content")
+                        or ai_payload.get("value")
+                        or ""
+                    )
+                )
+            elif isinstance(ai_payload, str):
+                ai_explanation = clean_text(ai_payload)
+            return {
+                "id": row["id"],
+                "project_id": row["project_id"],
+                "module_path": row["module_path"],
+                "question_type": row["question_type"],
+                "stem": row["stem"],
+                "options": options if isinstance(options, dict) else {},
+                "source_answer": row["source_answer"],
+                "source_explanation": source_explanation,
+                "ai_explanation": ai_explanation,
+                "explanation": source_explanation or ai_explanation or "题库暂未提供解析。",
+            }
+
+    def add_discussion_message(
+        self,
+        *,
+        project_id: str,
+        question_id: str,
+        content: str,
+        role: str = "user",
+        provider: str = "",
+        model: str = "",
+    ) -> dict[str, Any]:
         if role not in {"system", "user", "assistant"}:
             raise LearningCenterValidationError("Unsupported discussion role")
         text = clean_text(content)
@@ -791,8 +857,16 @@ class LearningPracticeService:
             conn.execute(
                 """INSERT INTO question_discussion_messages
                    (id, discussion_id, role, content, provider, model, metadata_json, created_at)
-                   VALUES (?, ?, ?, ?, '', '', '{}', ?)""",
-                (self.repository._new_id("discussion_message"), discussion_id, role, text, now),
+                   VALUES (?, ?, ?, ?, ?, ?, '{}', ?)""",
+                (
+                    self.repository._new_id("discussion_message"),
+                    discussion_id,
+                    role,
+                    text,
+                    clean_text(provider),
+                    clean_text(model),
+                    now,
+                ),
             )
         return self.discussion(project_id=project_id, question_id=question_id)
 

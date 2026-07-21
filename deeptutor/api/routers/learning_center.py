@@ -487,6 +487,108 @@ def add_practice_discussion(question_id: str, payload: PracticeDiscussionMessage
     except Exception as exc:
         _raise_domain_error(exc); raise AssertionError('unreachable')
 
+
+class PracticeAIDiscussionRequest(BaseModel):
+    project_id: str = Field(..., min_length=1, max_length=256)
+    message: str = Field(..., min_length=1, max_length=8_000)
+    history: list[dict[str, str]] = Field(default_factory=list, max_length=20)
+
+
+def _learning_discussion_context(question: dict[str, Any]) -> str:
+    def clip(value: Any, maximum: int = 10_000) -> str:
+        text = str(value or "").strip()
+        return text if len(text) <= maximum else text[: maximum] + "…"
+
+    options = question.get("options") if isinstance(question.get("options"), dict) else {}
+    option_text = "\n".join(f"{key}. {clip(value, 2_000)}" for key, value in sorted(options.items()))
+    return "\n".join(
+        [
+            f"模块：{clip(question.get('module_path'), 500) or '未归类'}",
+            f"题型：{clip(question.get('question_type'), 100)}",
+            f"题目：{clip(question.get('stem'))}",
+            f"选项：\n{option_text}" if option_text else "选项：（无）",
+            f"标准答案：{clip(question.get('source_answer'), 500) or '待复核'}",
+            f"现有解析：{clip(question.get('explanation'))}",
+        ]
+    )
+
+
+@router.post('/practice/questions/{question_id}/ai-discussion')
+async def discuss_practice_question(question_id: str, payload: PracticeAIDiscussionRequest) -> dict[str, Any]:
+    """AI tutor reply for one Learning Center question; also persists the turn."""
+    from deeptutor.services.llm.client import LLMClient
+    from deeptutor.services.llm.config import get_llm_config
+
+    try:
+        question = _practice_service().question_discussion_context(
+            project_id=payload.project_id,
+            question_id=question_id,
+        )
+    except Exception as exc:
+        _raise_domain_error(exc)
+        raise AssertionError('unreachable')
+
+    # Persist user message first so history survives even if the model fails.
+    try:
+        _practice_service().add_discussion_message(
+            project_id=payload.project_id,
+            question_id=question_id,
+            content=payload.message,
+            role='user',
+        )
+    except Exception as exc:
+        _raise_domain_error(exc)
+        raise AssertionError('unreachable')
+
+    system_prompt = (
+        "You are a patient Chinese exam tutor for DeepTutor Learning Center. "
+        "Discuss only the supplied practice question. Explain reasoning, "
+        "distinguish the verified source answer from any AI-generated explanation, "
+        "and admit uncertainty rather than inventing facts. Be concise by default, "
+        "but answer the learner's actual question directly.\n\n"
+        "Practice-question context:\n"
+        + _learning_discussion_context(question)
+    )
+    history = []
+    for item in payload.history[-20:]:
+        role = str(item.get('role') or '')
+        content = str(item.get('content') or '').strip()
+        if role in {'user', 'assistant'} and content:
+            history.append({'role': role, 'content': content})
+    try:
+        cfg = get_llm_config()
+        client = LLMClient(cfg)
+        reply = await client.complete(
+            payload.message.strip(),
+            system_prompt=system_prompt,
+            history=history,
+            max_retries=2,
+            temperature=0.2,
+            max_tokens=1_000,
+        )
+        text = (reply or '').strip() or '这道题我暂时没有生成有效回复，请换一种问法。'
+        provider = getattr(cfg, 'provider', '') or getattr(cfg, 'name', '') or 'llm'
+        model = getattr(cfg, 'model', '') or ''
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f'AI discussion is temporarily unavailable: {exc}',
+        ) from exc
+
+    try:
+        discussion = _practice_service().add_discussion_message(
+            project_id=payload.project_id,
+            question_id=question_id,
+            content=text,
+            role='assistant',
+            provider=str(provider),
+            model=str(model),
+        )
+    except Exception as exc:
+        _raise_domain_error(exc)
+        raise AssertionError('unreachable')
+    return {'reply': text, 'discussion': discussion}
+
 # Phase 7 evidence-based mastery and review APIs.
 from deeptutor.services.learning_center.mastery import LearningMasteryService  # noqa: E402
 

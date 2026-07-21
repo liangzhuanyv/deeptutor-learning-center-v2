@@ -4,18 +4,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Bookmark, CheckCircle2, ChevronLeft, ChevronRight, Clock3, Loader2, MessageCircle, Pause, Play, Send, Sparkles, Target } from "lucide-react";
+import { Bookmark, CheckCircle2, ChevronLeft, ChevronRight, Clock3, Loader2, Pause, Play, Send, Sparkles, Target } from "lucide-react";
 
 import LearningCenterNav from "@/components/learning-center/LearningCenterNav";
 import ExamRichText from "@/components/learning-center/ExamRichText";
+import LearningQuestionAIDiscussion from "@/components/learning-center/LearningQuestionAIDiscussion";
 import SpaceSectionHeader from "@/components/space/SpaceSectionHeader";
 import {
-  addPracticeDiscussion,
   autosavePracticeSession,
   getLearningKnowledgePoints,
   getLearningModules,
   getLearningProjects,
-  getPracticeDiscussion,
   getPracticeProposal,
   getPracticeReport,
   getPracticeSession,
@@ -29,7 +28,6 @@ import {
   type LearningModuleOption,
   type LearningProjectOption,
   type PracticeAnswerInput,
-  type PracticeDiscussion,
   type PracticeMode,
   type PracticeProposal,
   type PracticeReport,
@@ -93,8 +91,6 @@ export default function LearningPracticeCenter() {
   const [error, setError] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [bookmarked, setBookmarked] = useState<Record<string, boolean>>({});
-  const [discussion, setDiscussion] = useState<PracticeDiscussion | null>(null);
-  const [discussionText, setDiscussionText] = useState("");
   const [report, setReport] = useState<PracticeReport | null>(null);
   const [clock, setClock] = useState(() => Date.now() / 1000);
 
@@ -213,12 +209,6 @@ export default function LearningPracticeCenter() {
     return () => window.clearTimeout(timer);
   }, [dirty, drafts, session]);
 
-  useEffect(() => {
-    if (!currentQuestion || !session) { setDiscussion(null); return; }
-    void getPracticeDiscussion(session.project_id, currentQuestion.question_id)
-      .then(setDiscussion)
-      .catch(() => setDiscussion(null));
-  }, [currentQuestion?.question_id, session?.project_id]);
 
   useEffect(() => {
     if (!session || session.status !== "completed") { setReport(null); return; }
@@ -408,15 +398,6 @@ export default function LearningPracticeCenter() {
     } catch (reason) { setError(reason instanceof Error ? reason.message : "书签保存失败"); }
   };
 
-  const postDiscussion = async () => {
-    if (!session || !currentQuestion || !discussionText.trim()) return;
-    setWorking(true);
-    try {
-      setDiscussion(await addPracticeDiscussion(session.project_id, currentQuestion.question_id, discussionText));
-      setDiscussionText("");
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "讨论保存失败"); }
-    finally { setWorking(false); }
-  };
 
   if (loading) return <div className="flex min-h-64 items-center justify-center text-sm text-[var(--muted-foreground)]"><Loader2 className="mr-2 animate-spin" size={18} />加载学习中心…</div>;
 
@@ -488,7 +469,14 @@ export default function LearningPracticeCenter() {
         {currentQuestion.source_answer !== undefined && <div className={`mt-5 rounded-xl border p-4 ${currentQuestion.is_correct ? "border-emerald-300 bg-emerald-50/70" : "border-red-300 bg-red-50/70"}`}><p className="text-sm font-medium">{currentQuestion.is_correct ? "回答正确" : "回答错误"} · 原始答案：{currentQuestion.source_answer || "未提供"}</p>{currentQuestion.source_explanation && <ExamRichText className="mt-2 text-sm text-[var(--muted-foreground)]" text={currentQuestion.source_explanation} />}<p className="mt-2 text-xs text-[var(--muted-foreground)]">来源：{currentQuestion.provenance?.kind === "ai_generated" ? `AI 生成解析${currentQuestion.provenance.model ? `（${currentQuestion.provenance.model}）` : ""}` : "原始题库"}</p></div>}
         <div className="mt-6 flex items-center justify-between"><button type="button" onClick={() => setCurrentIndex((index) => Math.max(0, index - 1))} disabled={currentIndex === 0} className="inline-flex items-center gap-1 rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-40"><ChevronLeft size={16} />上一题</button>{session.mode === "learning" && currentQuestion.submitted_at === null && <button type="button" onClick={() => void submitCurrent()} disabled={working || session.status === "paused"} className="rounded-lg bg-sky-600 px-4 py-2 text-sm text-white">提交并判题</button>}<button type="button" onClick={() => setCurrentIndex((index) => Math.min(session.questions.length - 1, index + 1))} disabled={currentIndex === session.questions.length - 1} className="inline-flex items-center gap-1 rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-40">下一题<ChevronRight size={16} /></button></div>
       </main>
-      <aside className="order-3 self-start rounded-2xl border border-[var(--border)] bg-[var(--card)] p-4 xl:col-start-2 xl:row-start-2"><div className="flex items-center gap-2"><MessageCircle size={16} /><h2 className="text-sm font-semibold">本题笔记</h2></div><p className="mt-1 text-xs text-[var(--muted-foreground)]">当前仅保存你的笔记，不会自动调用 AI 教练。</p><div className="mt-3 max-h-60 space-y-2 overflow-auto">{discussion?.messages.length ? discussion.messages.map((message) => <p key={message.id} className={`rounded-lg p-2 text-xs ${message.role === "user" ? "bg-sky-50 text-sky-900 dark:bg-sky-950/30 dark:text-sky-100" : "bg-[var(--muted)]"}`}>{message.content}</p>) : <p className="text-xs text-[var(--muted-foreground)]">还没有讨论记录。</p>}</div><textarea value={discussionText} onChange={(event) => setDiscussionText(event.target.value)} className="mt-3 min-h-20 w-full rounded-lg border border-[var(--border)] bg-transparent p-2 text-xs" placeholder="记录你的疑问或推理…" /><button type="button" onClick={() => void postDiscussion()} disabled={working || !discussionText.trim()} className="mt-2 inline-flex w-full items-center justify-center gap-1 rounded-lg border border-[var(--border)] py-2 text-xs disabled:opacity-50"><Send size={13} />保存讨论</button><div className="mt-4 rounded-lg bg-[var(--muted)] p-3 text-xs text-[var(--muted-foreground)]"><Sparkles className="mb-1" size={14} />AI 深度讨论会在后续增强中使用已保存的题目、答案和你的推理作为上下文。</div></aside>
+            <aside className="order-3 self-start xl:col-start-2 xl:row-start-2">
+        <LearningQuestionAIDiscussion
+          projectId={session.project_id}
+          questionId={currentQuestion.question_id}
+          stem={currentQuestion.stem}
+          compact
+        />
+      </aside>
     </div>}
   </div>;
 }
