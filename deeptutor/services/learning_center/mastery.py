@@ -143,11 +143,27 @@ class LearningMasteryService:
         if module_id: where.append("q.module_id=?"); params.append(module_id)
         if knowledge_point_id: where.append("EXISTS (SELECT 1 FROM question_knowledge_points x WHERE x.question_id=q.id AND x.knowledge_point_id=?)"); params.append(knowledge_point_id)
         now=time.time()
-        if filter=="due": where.append("EXISTS (SELECT 1 FROM review_schedule r WHERE r.question_id=q.id AND r.state='due' AND r.due_at<=?)"); params.append(now)
-        elif filter=="repeated": where.append("w.wrong_count>=2")
-        elif filter=="reopen": where.append("w.state='reopen_suggested'")
-        elif filter=="manual_mastered": where.append("w.state='manual_mastered'")
-        elif filter=="all_wrong": where.append("w.wrong_count>0")
+        if filter == "due":
+            # Align with dashboard review_due_count: wrong states that still need work,
+            # OR an explicit due schedule row when present.
+            where.append(
+                "("
+                "w.state IN ('new','review_due','reviewing','reopen_suggested') "
+                "OR EXISTS ("
+                "  SELECT 1 FROM review_schedule r "
+                "  WHERE r.question_id = q.id AND r.state = 'due' AND r.due_at <= ?"
+                ")"
+                ")"
+            )
+            params.append(now)
+        elif filter == "repeated":
+            where.append("w.wrong_count>=2")
+        elif filter == "reopen":
+            where.append("w.state='reopen_suggested'")
+        elif filter == "manual_mastered":
+            where.append("w.state='manual_mastered'")
+        elif filter == "all_wrong":
+            where.append("w.wrong_count>0")
         with self.repository._connect() as conn:
             self.repository._require_project(conn,project_id)
             rows=conn.execute("SELECT q.id AS question_id,q.stem,q.question_type,q.module_id,w.state,w.wrong_count,w.correct_after_error_count,m.system_mastery_score,m.system_mastery_level,(SELECT due_at FROM review_schedule r WHERE r.question_id=q.id AND r.state='due' ORDER BY due_at LIMIT 1) due_at FROM wrong_question_states w JOIN questions q ON q.id=w.question_id LEFT JOIN question_mastery m ON m.question_id=q.id WHERE "+" AND ".join(where)+" ORDER BY CASE WHEN w.state='reopen_suggested' THEN 0 ELSE 1 END, due_at, w.last_wrong_at DESC",params).fetchall()

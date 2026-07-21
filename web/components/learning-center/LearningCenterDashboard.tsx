@@ -87,13 +87,38 @@ export default function LearningCenterDashboard() {
           <Metric label="学习项目" value={data.overview.project_count} hint="已导入的独立学习域" />
           <Metric label="可练题目" value={data.overview.question_count.toLocaleString()} hint="源内容与派生内容可追溯" />
           <Metric label="练习正确率" value={formatPercent(data.overview.accuracy)} hint={`${data.overview.attempt_count.toLocaleString()} 次已判定作答`} />
-          <Metric label="待复习风险" value={data.overview.review_due_count} hint={`${data.overview.active_session_count} 个进行中会话`} />
+          <Metric label="待复习风险" value={data.overview.review_due_count} hint={`${data.overview.active_session_count} 个可续练会话${data.overview.abandoned_empty_session_count ? ` · ${data.overview.abandoned_empty_session_count} 个空会话已忽略` : ""}`} />
         </section>
 
-        <section className="mt-5 grid gap-3 lg:grid-cols-3">
-          <Link href="/space/learning-center/imports" className="group rounded-2xl border border-sky-500/25 bg-sky-500/5 p-4 hover:border-sky-500/50"><FileJson2 size={18} className="text-sky-600 dark:text-sky-300" /><h2 className="mt-3 text-[14px] font-semibold">导入新的学习项目</h2><p className="mt-1 text-[12px] leading-relaxed text-[var(--muted-foreground)]">从 canonical JSON 开始，逐项审计再提交。</p></Link>
-          <Link href="/space/exam-practice" className="group rounded-2xl border border-violet-500/25 bg-violet-500/5 p-4 hover:border-violet-500/50"><BookOpenCheck size={18} className="text-violet-600 dark:text-violet-300" /><h2 className="mt-3 text-[14px] font-semibold">继续兼容刷题</h2><p className="mt-1 text-[12px] leading-relaxed text-[var(--muted-foreground)]">保留基金与证券题库的现有工作流。</p></Link>
-          <div className="rounded-2xl border border-[var(--border)] bg-[var(--card)] p-4"><Target size={18} className="text-emerald-600 dark:text-emerald-300" /><h2 className="mt-3 text-[14px] font-semibold">最近活动</h2>{data.overview.last_session ? <p className="mt-1 text-[12px] leading-relaxed text-[var(--muted-foreground)]">{data.overview.last_session.project_name} · {data.overview.last_session.answered}/{data.overview.last_session.total} 题 · {formatPercent(data.overview.last_session.accuracy)}</p> : <p className="mt-1 text-[12px] text-[var(--muted-foreground)]">开始一次练习后，这里会保留最近证据。</p>}</div>
+        <section className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          {data.overview.last_session?.resumable ? (
+            <Link href={`/space/learning-center/practice?sessionId=${encodeURIComponent(data.overview.last_session.id)}`} className="group rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4 hover:border-emerald-500/50">
+              <Target size={18} className="text-emerald-600 dark:text-emerald-300" />
+              <h2 className="mt-3 text-[14px] font-semibold">继续上次练习</h2>
+              <p className="mt-1 text-[12px] leading-relaxed text-[var(--muted-foreground)]">{data.overview.last_session.project_name} · 已作答 {data.overview.last_session.answered}/{data.overview.last_session.total}</p>
+            </Link>
+          ) : (
+            <Link href="/space/learning-center/practice?limit=10&status=unseen" className="group rounded-2xl border border-emerald-500/30 bg-emerald-500/5 p-4 hover:border-emerald-500/50">
+              <Target size={18} className="text-emerald-600 dark:text-emerald-300" />
+              <h2 className="mt-3 text-[14px] font-semibold">快速 10 题</h2>
+              <p className="mt-1 text-[12px] leading-relaxed text-[var(--muted-foreground)]">优先未作答题目，马上开练。</p>
+            </Link>
+          )}
+          <Link href="/space/learning-center/review" className="group rounded-2xl border border-amber-500/30 bg-amber-500/5 p-4 hover:border-amber-500/50">
+            <CircleAlert size={18} className="text-amber-600 dark:text-amber-300" />
+            <h2 className="mt-3 text-[14px] font-semibold">复习待办错题</h2>
+            <p className="mt-1 text-[12px] leading-relaxed text-[var(--muted-foreground)]">{data.overview.review_due_count} 道需要复盘。</p>
+          </Link>
+          <Link href="/space/learning-center/recommendations" className="group rounded-2xl border border-sky-500/25 bg-sky-500/5 p-4 hover:border-sky-500/50">
+            <TrendingUp size={18} className="text-sky-600 dark:text-sky-300" />
+            <h2 className="mt-3 text-[14px] font-semibold">查看规则建议</h2>
+            <p className="mt-1 text-[12px] leading-relaxed text-[var(--muted-foreground)]">确定性规则，不会自动改掌握度。</p>
+          </Link>
+          <Link href="/space/learning-center/imports" className="group rounded-2xl border border-[var(--border)] bg-[var(--card)] p-4 hover:border-[var(--foreground)]/30">
+            <FileJson2 size={18} className="text-[var(--muted-foreground)]" />
+            <h2 className="mt-3 text-[14px] font-semibold">导入题库</h2>
+            <p className="mt-1 text-[12px] leading-relaxed text-[var(--muted-foreground)]">canonical JSON 审计后提交。</p>
+          </Link>
         </section>
 
         {data.projects.length === 0 ? <section className="mt-5 rounded-2xl border border-dashed border-[var(--border)] bg-[var(--card)] p-8 text-center"><FileJson2 size={28} className="mx-auto text-[var(--muted-foreground)]" /><h2 className="mt-3 text-[15px] font-semibold">还没有学习项目</h2><p className="mx-auto mt-1 max-w-md text-[12px] text-[var(--muted-foreground)]">导入第一份题库后，总览会显示练习趋势、掌握度和错误热度。</p><Link href="/space/learning-center/imports" className="mt-4 inline-flex rounded-lg bg-[var(--foreground)] px-3.5 py-2 text-[12px] font-medium text-[var(--background)]">去导入中心</Link></section> : <>

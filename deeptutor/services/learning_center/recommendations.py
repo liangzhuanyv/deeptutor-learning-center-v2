@@ -58,7 +58,38 @@ class LearningRecommendationService:
         with self.repository._connect() as conn:
             row=conn.execute('SELECT * FROM ai_recommendations WHERE id=?',(recommendation_id,)).fetchone()
             if not row: raise LearningCenterNotFoundError('Recommendation not found')
-            # The record is an audit of user intent only. No recommendation is
-            # allowed to mutate content, session, mastery, or a plan here.
+            # Audit only: never mutate mastery/content here. The UI uses
+            # next_action to navigate into practice with prefilled filters.
             conn.execute('INSERT INTO ai_recommendation_actions (id,recommendation_id,action,payload_json,created_at) VALUES (?,?,?,?,?)',(self.repository._new_id('recommendation_action'),recommendation_id,action,canonical_json(payload or {}),now))
-            return self._serialize(conn,row)
+            result=self._serialize(conn,row)
+        result['decision'] = action
+        proposed = result.get('proposed_action') or {}
+        if action in {'accepted','edited_accepted','reduced'} and proposed.get('type') in {'start_practice','review_reopen','similar_questions'}:
+            filters = dict(proposed.get('filters') or {})
+            if payload:
+                # edited_accepted / reduced may override limit etc.
+                for key in ('limit','status','module_id','difficulty','mode'):
+                    if key in payload and payload[key] is not None:
+                        filters[key] = payload[key]
+            if action == 'reduced' and 'limit' in filters:
+                try:
+                    filters['limit'] = max(3, int(filters['limit']) // 2)
+                except (TypeError, ValueError):
+                    pass
+            query = {
+                'project_id': result['project_id'],
+                **{k: v for k, v in filters.items() if v is not None and v != ''},
+            }
+            if proposed.get('type') == 'similar_questions' and proposed.get('question_id'):
+                query['seed_question_id'] = proposed['question_id']
+                query.setdefault('status', 'wrong')
+            result['next_action'] = {
+                'type': 'open_practice',
+                'href': '/space/learning-center/practice',
+                'query': query,
+                'label': '按此建议开始练习',
+                'requires_confirmation': bool(proposed.get('requires_confirmation', True)),
+            }
+        else:
+            result['next_action'] = None
+        return result

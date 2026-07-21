@@ -1,8 +1,207 @@
 "use client";
 /* eslint-disable i18n/no-literal-ui-text -- Chinese-first Learning Center v2 UI. */
-import { useEffect,useState } from "react";
-import { Loader2,Sparkles } from "lucide-react";
+
+import { useCallback, useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { Loader2, Sparkles } from "lucide-react";
+
 import LearningCenterNav from "@/components/learning-center/LearningCenterNav";
 import SpaceSectionHeader from "@/components/space/SpaceSectionHeader";
-import { decideLearningRecommendation,generateLearningRecommendations,getLearningProjects,getLearningRecommendations,type LearningProjectOption,type LearningRecommendation } from "@/lib/learning-center-api";
-export default function LearningRecommendations(){const [projects,setProjects]=useState<LearningProjectOption[]>([]);const [project,setProject]=useState('');const [items,setItems]=useState<LearningRecommendation[]>([]);const [budget,setBudget]=useState('今天只有10分钟');const [busy,setBusy]=useState(false);const [error,setError]=useState('');const load=async(id:string)=>{if(!id)return;setItems(await getLearningRecommendations(id));};useEffect(()=>{void getLearningProjects().then(x=>{setProjects(x);setProject(x[0]?.id??'');if(x[0])void load(x[0].id)}).catch(e=>setError(e instanceof Error?e.message:'无法加载项目'))},[]);const generate=async()=>{if(!project)return;setBusy(true);try{setItems(await generateLearningRecommendations({project_id:project,trigger:'time_budget',time_budget_text:budget}))}catch(e){setError(e instanceof Error?e.message:'生成建议失败')}finally{setBusy(false)}};const decide=async(id:string,a:'accepted'|'ignored'|'deferred')=>{try{await decideLearningRecommendation(id,a);await load(project)}catch(e){setError(e instanceof Error?e.message:'记录决定失败')}};return <div className="mx-auto w-full max-w-6xl p-4 sm:p-6 lg:p-8"><LearningCenterNav/><SpaceSectionHeader icon={Sparkles} title="学习建议中心" description="建议只提供可解释的下一步；任何计划、内容或掌握度变化都必须由你确认。"/>{error&&<p role="alert" className="mt-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}<div className="mt-5 flex flex-wrap gap-2"><select value={project} onChange={e=>{setProject(e.target.value);void load(e.target.value)}} className="rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-sm">{projects.map(x=><option key={x.id} value={x.id}>{x.name}</option>)}</select><input value={budget} onChange={e=>setBudget(e.target.value)} className="rounded-lg border border-[var(--border)] bg-transparent px-3 py-2 text-sm"/><button onClick={()=>void generate()} disabled={busy||!project} className="inline-flex items-center gap-2 rounded-lg bg-sky-600 px-4 py-2 text-sm text-white">{busy&&<Loader2 size={15} className="animate-spin"/>}生成建议</button></div><section className="mt-5 grid gap-4 md:grid-cols-2">{items.map(item=><article key={item.id} className="rounded-2xl border border-[var(--border)] bg-[var(--card)] p-5"><div className="flex justify-between gap-3"><h2 className="font-semibold">{item.title}</h2><span className="text-xs text-[var(--muted-foreground)]">{item.confidence==null?'—':`${Math.round(item.confidence*100)}%`}</span></div><p className="mt-3 text-sm text-[var(--muted-foreground)]">{item.explanation}</p><p className="mt-3 text-xs text-[var(--muted-foreground)]">证据 {item.evidence.length} 条 · {item.provider||'规则'} / {item.model||'—'} · {item.estimated_minutes??'—'} 分钟</p><details className="mt-3 text-xs"><summary>查看证据与建议动作</summary><pre className="mt-2 overflow-auto rounded bg-[var(--muted)] p-2">{JSON.stringify({evidence:item.evidence,action:item.proposed_action},null,2)}</pre></details><div className="mt-4 flex gap-2"><button onClick={()=>void decide(item.id,'accepted')} className="rounded-lg bg-emerald-600 px-3 py-2 text-sm text-white">确认</button><button onClick={()=>void decide(item.id,'deferred')} className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm">稍后</button><button onClick={()=>void decide(item.id,'ignored')} className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm">忽略</button></div>{item.actions[0]&&<p className="mt-3 text-xs text-[var(--muted-foreground)]">最近决定：{item.actions[0].action}</p>}</article>)}</section>{!items.length&&!busy&&<p className="mt-12 text-center text-sm text-[var(--muted-foreground)]">尚无建议。输入可用时间后生成一份需要你确认的训练建议。</p>}</div>}
+import {
+  decideLearningRecommendation,
+  generateLearningRecommendations,
+  getLearningProjects,
+  getLearningRecommendations,
+  type LearningProjectOption,
+  type LearningRecommendation,
+} from "@/lib/learning-center-api";
+
+function practiceHref(query: Record<string, string | number | null | undefined>): string {
+  const params = new URLSearchParams();
+  Object.entries(query).forEach(([key, value]) => {
+    if (value == null || value === "") return;
+    params.set(key, String(value));
+  });
+  const q = params.toString();
+  return `/space/learning-center/practice${q ? `?${q}` : ""}`;
+}
+
+export default function LearningRecommendations() {
+  const router = useRouter();
+  const [projects, setProjects] = useState<LearningProjectOption[]>([]);
+  const [project, setProject] = useState("");
+  const [items, setItems] = useState<LearningRecommendation[]>([]);
+  const [budget, setBudget] = useState("今天只有10分钟");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const load = useCallback(async (id: string) => {
+    if (!id) return;
+    setItems(await getLearningRecommendations(id));
+  }, []);
+
+  useEffect(() => {
+    void getLearningProjects()
+      .then((result) => {
+        setProjects(result);
+        const first = result[0]?.id ?? "";
+        setProject(first);
+        if (first) void load(first);
+      })
+      .catch((reason) => setError(reason instanceof Error ? reason.message : "无法加载项目"));
+  }, [load]);
+
+  const generate = async () => {
+    if (!project) return;
+    setBusy(true);
+    setError("");
+    try {
+      setItems(
+        await generateLearningRecommendations({
+          project_id: project,
+          trigger: "time_budget",
+          time_budget_text: budget,
+        }),
+      );
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "生成建议失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const decide = async (id: string, action: "accepted" | "ignored" | "deferred" | "reduced") => {
+    setBusy(true);
+    setError("");
+    try {
+      const result = await decideLearningRecommendation(id, action);
+      if (action === "accepted" || action === "reduced") {
+        const next = result.next_action;
+        if (next?.href) {
+          router.push(practiceHref(next.query || { project_id: project }));
+          return;
+        }
+        // Fallback: open practice for this project.
+        router.push(`/space/learning-center/practice?project_id=${encodeURIComponent(project)}`);
+        return;
+      }
+      await load(project);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "操作失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="mx-auto w-full max-w-5xl p-4 sm:p-6 lg:p-8">
+      <LearningCenterNav />
+      <SpaceSectionHeader
+        icon={Sparkles}
+        title="规则建议"
+        description="当前为确定性规则建议（非大模型）。接受后只会打开练习预填，不会自动改掌握度或计划。"
+      />
+      {error && (
+        <p role="alert" className="mt-4 rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {error}
+        </p>
+      )}
+      <div className="mt-5 flex flex-wrap items-end gap-2">
+        <label className="text-sm">
+          项目
+          <select
+            value={project}
+            onChange={(event) => {
+              setProject(event.target.value);
+              void load(event.target.value);
+            }}
+            className="mt-1 block rounded-lg border border-[var(--border)] bg-transparent px-3 py-2"
+          >
+            {projects.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="min-w-[16rem] flex-1 text-sm">
+          时间预算（可选）
+          <input
+            value={budget}
+            onChange={(event) => setBudget(event.target.value)}
+            className="mt-1 w-full rounded-lg border border-[var(--border)] bg-transparent px-3 py-2"
+          />
+        </label>
+        <button
+          type="button"
+          disabled={busy || !project}
+          onClick={() => void generate()}
+          className="inline-flex items-center gap-1 rounded-lg bg-[var(--foreground)] px-3.5 py-2 text-sm font-medium text-[var(--background)] disabled:opacity-40"
+        >
+          {busy ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
+          生成规则建议
+        </button>
+      </div>
+
+      <div className="mt-5 space-y-3">
+        {!items.length && (
+          <p className="rounded-2xl border border-dashed border-[var(--border)] p-8 text-center text-sm text-[var(--muted-foreground)]">
+            暂无建议。可先完成一组练习，或点击上方生成。
+          </p>
+        )}
+        {items.map((item) => (
+          <article key={item.id} className="rounded-2xl border border-[var(--border)] bg-[var(--card)] p-4">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <p className="text-[11px] text-[var(--muted-foreground)]">
+                  {item.provider}/{item.model} · 置信 {item.confidence == null ? "—" : Math.round(item.confidence * 100)}%
+                  {item.estimated_minutes ? ` · 约 ${item.estimated_minutes} 分钟` : ""}
+                </p>
+                <h2 className="mt-1 text-[15px] font-semibold">{item.title}</h2>
+                <p className="mt-1 text-sm leading-relaxed text-[var(--muted-foreground)]">{item.explanation}</p>
+              </div>
+              <span className="rounded-full bg-slate-500/10 px-2 py-1 text-[11px] text-[var(--muted-foreground)]">规则建议</span>
+            </div>
+            {!!item.evidence?.length && (
+              <p className="mt-3 text-[12px] text-[var(--muted-foreground)]">证据 {item.evidence.length} 条（错题/风险信号）</p>
+            )}
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void decide(item.id, "accepted")}
+                className="rounded-lg bg-emerald-600 px-3 py-1.5 text-sm text-white disabled:opacity-40"
+              >
+                接受并去练习
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void decide(item.id, "reduced")}
+                className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm"
+              >
+                减半题量
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void decide(item.id, "deferred")}
+                className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm"
+              >
+                稍后
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void decide(item.id, "ignored")}
+                className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm text-[var(--muted-foreground)]"
+              >
+                忽略
+              </button>
+            </div>
+          </article>
+        ))}
+      </div>
+    </div>
+  );
+}

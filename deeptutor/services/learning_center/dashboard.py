@@ -31,27 +31,73 @@ class LearningCenterDashboardService:
                     (SELECT COUNT(*) FROM attempts WHERE is_correct = 1) AS correct_count,
                     (SELECT COUNT(*) FROM wrong_question_states
                        WHERE state IN ('new','review_due','reviewing','reopen_suggested')) AS review_due_count,
-                    (SELECT COUNT(*) FROM practice_sessions WHERE status = 'active') AS active_session_count"""
+                    (SELECT COUNT(*) FROM practice_sessions s
+                       WHERE s.status IN ('active','paused')
+                         AND EXISTS (
+                           SELECT 1 FROM practice_session_items i
+                           WHERE i.session_id = s.id
+                             AND (i.submitted_at IS NOT NULL OR TRIM(COALESCE(i.user_answer,'')) != '')
+                         )) AS active_session_count,
+                    (SELECT COUNT(*) FROM practice_sessions
+                       WHERE status = 'active'
+                         AND NOT EXISTS (
+                           SELECT 1 FROM practice_session_items i
+                           WHERE i.session_id = practice_sessions.id
+                             AND (i.submitted_at IS NOT NULL OR TRIM(COALESCE(i.user_answer,'')) != '')
+                         )) AS abandoned_empty_session_count"""
             ).fetchone()
+            # Prefer a resumable in-progress session; otherwise latest completed.
             latest = conn.execute(
-                """SELECT s.id, s.mode, s.title, s.started_at, s.completed_at, p.id AS project_id, p.name AS project_name,
-                          COUNT(i.id) AS total, SUM(CASE WHEN i.submitted_at IS NOT NULL THEN 1 ELSE 0 END) AS answered,
-                          SUM(CASE WHEN i.is_correct = 1 THEN 1 ELSE 0 END) AS correct
+                """SELECT s.id, s.mode, s.title, s.status, s.started_at, s.completed_at,
+                          p.id AS project_id, p.name AS project_name,
+                          COUNT(i.id) AS total,
+                          SUM(CASE WHEN i.submitted_at IS NOT NULL THEN 1 ELSE 0 END) AS answered,
+                          SUM(CASE WHEN i.is_correct = 1 THEN 1 ELSE 0 END) AS correct,
+                          SUM(CASE WHEN TRIM(COALESCE(i.user_answer,'')) != '' THEN 1 ELSE 0 END) AS drafted
                      FROM practice_sessions s
                      JOIN learning_projects p ON p.id = s.project_id
                      LEFT JOIN practice_session_items i ON i.session_id = s.id
+                    WHERE s.status IN ('active','paused')
+                      AND EXISTS (
+                        SELECT 1 FROM practice_session_items x
+                        WHERE x.session_id = s.id
+                          AND (x.submitted_at IS NOT NULL OR TRIM(COALESCE(x.user_answer,'')) != '')
+                      )
                  GROUP BY s.id
-                 ORDER BY COALESCE(s.completed_at, s.started_at) DESC
+                 ORDER BY s.updated_at DESC
                     LIMIT 1"""
             ).fetchone()
+            if latest is None:
+                latest = conn.execute(
+                    """SELECT s.id, s.mode, s.title, s.status, s.started_at, s.completed_at,
+                              p.id AS project_id, p.name AS project_name,
+                              COUNT(i.id) AS total,
+                              SUM(CASE WHEN i.submitted_at IS NOT NULL THEN 1 ELSE 0 END) AS answered,
+                              SUM(CASE WHEN i.is_correct = 1 THEN 1 ELSE 0 END) AS correct,
+                              SUM(CASE WHEN TRIM(COALESCE(i.user_answer,'')) != '' THEN 1 ELSE 0 END) AS drafted
+                         FROM practice_sessions s
+                         JOIN learning_projects p ON p.id = s.project_id
+                         LEFT JOIN practice_session_items i ON i.session_id = s.id
+                     GROUP BY s.id
+                     ORDER BY COALESCE(s.completed_at, s.started_at) DESC
+                        LIMIT 1"""
+                ).fetchone()
         result = dict(counts)
         result["accuracy"] = self._accuracy(result.pop("correct_count"), result["attempt_count"])
         result["last_session"] = None if latest is None else {
-            "id": latest["id"], "mode": latest["mode"], "title": latest["title"],
-            "started_at": latest["started_at"], "completed_at": latest["completed_at"],
-            "project_id": latest["project_id"], "project_name": latest["project_name"],
-            "total": int(latest["total"] or 0), "answered": int(latest["answered"] or 0),
+            "id": latest["id"],
+            "mode": latest["mode"],
+            "title": latest["title"],
+            "status": latest["status"],
+            "started_at": latest["started_at"],
+            "completed_at": latest["completed_at"],
+            "project_id": latest["project_id"],
+            "project_name": latest["project_name"],
+            "total": int(latest["total"] or 0),
+            "answered": int(latest["answered"] or 0),
+            "drafted": int(latest["drafted"] or 0),
             "accuracy": self._accuracy(int(latest["correct"] or 0), int(latest["answered"] or 0)),
+            "resumable": latest["status"] in {"active", "paused"} and int(latest["drafted"] or 0) > 0,
         }
         return result
 

@@ -184,6 +184,89 @@ class LearningPracticeService:
             "questions": selected,
         }
 
+    def _proposal_from_ids(
+        self,
+        *,
+        project_id: str,
+        question_ids: list[str],
+        module_id: str | None = None,
+        knowledge_point_id: str | None = None,
+        question_types: Iterable[str] = (),
+        difficulty: str | None = None,
+        status: str | None = None,
+        limit: int = 20,
+    ) -> dict[str, Any]:
+        """Build a proposal that pins the exact confirmed question set."""
+        ordered_ids = list(dict.fromkeys(clean_text(qid) for qid in question_ids if clean_text(qid)))
+        if not ordered_ids:
+            raise LearningCenterValidationError("question_ids must not be empty")
+        if len(ordered_ids) > 200:
+            raise LearningCenterValidationError("question_ids must not exceed 200 items")
+        types = self._clean_choices(question_types)
+        filters = {
+            "module_id": module_id,
+            "knowledge_point_id": knowledge_point_id,
+            "question_types": types,
+            "difficulty": clean_text(difficulty or "") or None,
+            "status": clean_text(status or "") or None,
+            "limit": max(1, min(int(limit), 200)),
+            "pinned_question_ids": ordered_ids,
+        }
+        placeholders = ",".join("?" for _ in ordered_ids)
+        with self.repository._connect() as conn:
+            self.repository._require_project(conn, project_id)
+            rows = conn.execute(
+                f"""SELECT q.id, q.question_type, q.stem, q.module_id, q.difficulty,
+                           COALESCE(m.path, '') AS module_path,
+                           COALESCE(stats.attempt_count, 0) AS attempt_count
+                    FROM questions q
+                    LEFT JOIN content_modules m ON m.id = q.module_id
+                    LEFT JOIN (
+                        SELECT question_id, COUNT(*) AS attempt_count
+                        FROM attempts GROUP BY question_id
+                    ) stats ON stats.question_id = q.id
+                    WHERE q.project_id = ? AND q.id IN ({placeholders})""",
+                [project_id, *ordered_ids],
+            ).fetchall()
+            by_id = {row["id"]: row for row in rows}
+            missing = [qid for qid in ordered_ids if qid not in by_id]
+            if missing:
+                raise LearningCenterValidationError(
+                    f"Unknown or out-of-project question_ids: {', '.join(missing[:5])}"
+                )
+            selected = []
+            for qid in ordered_ids:
+                row = by_id[qid]
+                selected.append({
+                    "question_id": row["id"],
+                    "question_type": row["question_type"],
+                    "stem": row["stem"],
+                    "module_id": row["module_id"],
+                    "module_path": row["module_path"],
+                    "difficulty": row["difficulty"],
+                    "attempt_count": int(row["attempt_count"] or 0),
+                })
+        unseen = sum(1 for item in selected if item["attempt_count"] == 0)
+        types_c, diffs, mods = Counter(), Counter(), Counter()
+        for item in selected:
+            types_c[item["question_type"] or "other"] += 1
+            diffs[item["difficulty"] or "unspecified"] += 1
+            mods[item["module_path"] or "未归类"] += 1
+        return {
+            "project_id": project_id,
+            "candidate_count": len(selected),
+            "selected_count": len(selected),
+            "unseen_selected_count": unseen,
+            "seen_selected_count": len(selected) - unseen,
+            "filters": filters,
+            "composition": {
+                "question_types": dict(types_c),
+                "difficulties": dict(diffs),
+                "modules": dict(mods),
+            },
+            "questions": selected,
+        }
+
     def start(
         self,
         *,
@@ -197,26 +280,45 @@ class LearningPracticeService:
         status: str | None = None,
         limit: int = 20,
         time_budget_minutes: int | None = None,
+        question_ids: Iterable[str] | None = None,
     ) -> dict[str, Any]:
         if mode not in {"learning", "exam"}:
             raise LearningCenterValidationError("mode must be learning or exam")
         if time_budget_minutes is not None and not 1 <= int(time_budget_minutes) <= 600:
             raise LearningCenterValidationError("time budget must be between 1 and 600 minutes")
-        proposal = self.propose(
-            project_id=project_id,
-            module_id=module_id,
-            knowledge_point_id=knowledge_point_id,
-            question_types=question_types,
-            difficulty=difficulty,
-            status=status,
-            limit=limit,
-        )
+        pinned = [clean_text(qid) for qid in (question_ids or []) if clean_text(qid)]
+        if pinned:
+            proposal = self._proposal_from_ids(
+                project_id=project_id,
+                question_ids=pinned,
+                module_id=module_id,
+                knowledge_point_id=knowledge_point_id,
+                question_types=question_types,
+                difficulty=difficulty,
+                status=status,
+                limit=limit if limit else len(pinned),
+            )
+        else:
+            proposal = self.propose(
+                project_id=project_id,
+                module_id=module_id,
+                knowledge_point_id=knowledge_point_id,
+                question_types=question_types,
+                difficulty=difficulty,
+                status=status,
+                limit=limit,
+            )
         if not proposal["questions"]:
             raise LearningCenterValidationError("No questions match the selected scope")
 
         now = time.time()
         session_id = self.repository._new_id("session")
-        filters = {**proposal["filters"], "time_budget_minutes": time_budget_minutes, "paused_at": None, "paused_total_seconds": 0}
+        filters = {
+            **proposal["filters"],
+            "time_budget_minutes": time_budget_minutes,
+            "paused_at": None,
+            "paused_total_seconds": 0,
+        }
         with self.repository._connect() as conn:
             conn.execute(
                 """INSERT INTO practice_sessions
@@ -237,7 +339,43 @@ class LearningPracticeService:
     def _questions(self, conn: Any, session_id: str, mode: str, *, reveal: bool) -> list[dict[str, Any]]:
         rows = conn.execute(
             """SELECT i.*, q.question_type, q.stem, q.source_answer, q.source_explanation, q.source_id,
-                       (SELECT json_group_object(option_key, content) FROM question_options o WHERE o.question_id = q.id) AS options_json
+                       (SELECT json_group_object(option_key, content) FROM question_options o WHERE o.question_id = q.id) AS options_json,
+                       (
+                         SELECT d.output_json FROM ai_derivations d
+                         WHERE d.question_id = q.id
+                           AND d.derivation_type IN (
+                             'explanation', 'source_explanation', 'ai_explanation',
+                             'missing_explanation', 'enrich_explanation'
+                           )
+                         ORDER BY
+                           CASE d.review_status WHEN 'accepted' THEN 0 WHEN 'unreviewed' THEN 1 ELSE 2 END,
+                           d.created_at DESC
+                         LIMIT 1
+                       ) AS ai_explanation_json,
+                       (
+                         SELECT d.provider FROM ai_derivations d
+                         WHERE d.question_id = q.id
+                           AND d.derivation_type IN (
+                             'explanation', 'source_explanation', 'ai_explanation',
+                             'missing_explanation', 'enrich_explanation'
+                           )
+                         ORDER BY
+                           CASE d.review_status WHEN 'accepted' THEN 0 WHEN 'unreviewed' THEN 1 ELSE 2 END,
+                           d.created_at DESC
+                         LIMIT 1
+                       ) AS ai_provider,
+                       (
+                         SELECT d.model FROM ai_derivations d
+                         WHERE d.question_id = q.id
+                           AND d.derivation_type IN (
+                             'explanation', 'source_explanation', 'ai_explanation',
+                             'missing_explanation', 'enrich_explanation'
+                           )
+                         ORDER BY
+                           CASE d.review_status WHEN 'accepted' THEN 0 WHEN 'unreviewed' THEN 1 ELSE 2 END,
+                           d.created_at DESC
+                         LIMIT 1
+                       ) AS ai_model
                 FROM practice_session_items i
                 JOIN questions q ON q.id = i.question_id
                 WHERE i.session_id = ?
@@ -270,11 +408,38 @@ class LearningPracticeService:
             }
             # Never return answer/explanation fields in an active or paused exam.
             if reveal or (mode == "learning" and row["submitted_at"] is not None):
+                source_explanation = clean_text(row["source_explanation"] or "")
+                ai_payload = _json(row["ai_explanation_json"], {})
+                ai_explanation = ""
+                if isinstance(ai_payload, dict):
+                    ai_explanation = clean_text(
+                        str(
+                            ai_payload.get("explanation")
+                            or ai_payload.get("source_explanation")
+                            or ai_payload.get("text")
+                            or ai_payload.get("content")
+                            or ai_payload.get("value")
+                            or ""
+                        )
+                    )
+                elif isinstance(ai_payload, str):
+                    ai_explanation = clean_text(ai_payload)
+                if not ai_explanation and row["ai_explanation_json"]:
+                    raw = str(row["ai_explanation_json"]).strip().strip('"')
+                    ai_explanation = clean_text(raw)
+                explanation = source_explanation or ai_explanation
+                provenance_kind = "source_original" if source_explanation else ("ai_generated" if ai_explanation else "source_original")
                 item.update(
                     {
                         "source_answer": row["source_answer"],
-                        "source_explanation": row["source_explanation"],
-                        "provenance": {"source_id": row["source_id"], "kind": "source_original"},
+                        "source_explanation": explanation,
+                        "ai_explanation": ai_explanation or None,
+                        "provenance": {
+                            "source_id": row["source_id"],
+                            "kind": provenance_kind,
+                            "provider": row["ai_provider"] if provenance_kind == "ai_generated" else None,
+                            "model": row["ai_model"] if provenance_kind == "ai_generated" else None,
+                        },
                     }
                 )
             result.append(item)
@@ -443,6 +608,55 @@ class LearningPracticeService:
                 self._replace_eliminations(conn, session_item_id=item_id, option_keys=eliminated, now=now)
                 LearningMasteryService(self.repository).record_attempt_in_connection(conn, project_id=session["project_id"], question_id=row["question_id"], attempt_id=attempt_id, is_correct=is_correct, confidence=confidence, now=now)
             if finish:
+                # Grade remaining autosaved answers that the client forgot to include.
+                pending = conn.execute(
+                    """SELECT i.*, q.source_answer FROM practice_session_items i
+                       JOIN questions q ON q.id = i.question_id
+                       WHERE i.session_id = ? AND i.submitted_at IS NULL
+                         AND TRIM(COALESCE(i.user_answer, '')) != ''""",
+                    (session_id,),
+                ).fetchall()
+                for row in pending:
+                    user_answer = clean_text(row["user_answer"] or "")
+                    confidence = clean_text(row["confidence"] or "")
+                    if confidence not in _CONFIDENCE:
+                        confidence = ""
+                    source_answer = _answer(row["source_answer"])
+                    is_correct: int | None = None if not source_answer else int(_answer(user_answer) == source_answer)
+                    conn.execute(
+                        """UPDATE practice_session_items
+                           SET is_correct = ?, submitted_at = ?, updated_at = ? WHERE id = ?""",
+                        (is_correct, now, now, row["id"]),
+                    )
+                    attempt_id = self.repository._new_id("attempt")
+                    conn.execute(
+                        """INSERT INTO attempts
+                           (id, session_id, session_item_id, question_id, user_answer, is_correct, confidence,
+                            judgment_json, elapsed_seconds, submitted_at, created_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            attempt_id,
+                            session_id,
+                            row["id"],
+                            row["question_id"],
+                            user_answer,
+                            is_correct,
+                            confidence,
+                            canonical_json({"judged_by": "source_answer", "source_available": bool(source_answer), "promoted_from_autosave": True}),
+                            row["elapsed_seconds"],
+                            now,
+                            now,
+                        ),
+                    )
+                    LearningMasteryService(self.repository).record_attempt_in_connection(
+                        conn,
+                        project_id=session["project_id"],
+                        question_id=row["question_id"],
+                        attempt_id=attempt_id,
+                        is_correct=is_correct,
+                        confidence=confidence,
+                        now=now,
+                    )
                 completed = True
                 conn.execute(
                     "UPDATE practice_sessions SET status = 'completed', completed_at = ?, updated_at = ? WHERE id = ?",
@@ -610,9 +824,10 @@ class LearningPracticeService:
                     bucket["total"] += 1
                     bucket["wrong"] += int(row["is_correct"] == 0)
             weak_kps = [key for key, value in knowledge_impact.items() if value["wrong"]]
+            wrong = max(0, answered - correct) if graded else sum(1 for row in item_rows if row["is_correct"] == 0)
             advisory = (
-                "优先复盘错误题及其知识点，再用相似题验证。"
-                if weak_kps else "已完成本次练习；建议通过相似题巩固当前掌握度。"
+                f"规则建议：本次已作答 {answered}/{total}，正确 {correct}。"
+                + (f" 有 {wrong} 道错题，建议先复盘错题再开下一组。" if wrong else " 正确率不错，可用相似题巩固。")
             )
             return {
                 "session_id": session_id,
@@ -627,11 +842,17 @@ class LearningPracticeService:
                 "confidence": {key: {**value, "accuracy": value["correct"] / value["count"] if value["count"] else None} for key, value in confidence.items()},
                 "module_impact": module_impact,
                 "knowledge_point_impact": knowledge_impact,
-                "ai_advisory": {"text": advisory, "provider": "", "model": "", "generated": False},
+                "ai_advisory": {
+                    "text": advisory,
+                    "provider": "rules",
+                    "model": "session-report-v1",
+                    "generated": False,
+                    "label": "规则建议（非模型生成）",
+                },
                 "follow_up_actions": [
-                    {"type": "review_wrong", "label": "复盘错题"},
-                    {"type": "similar_questions", "label": "练习相似题"},
-                    {"type": "resume_learning", "label": "继续学习"},
+                    {"type": "review_wrong", "label": "去复习错题", "href": "/space/learning-center/review"},
+                    {"type": "start_unseen", "label": "再练一组未作答", "href": "/space/learning-center/practice?status=unseen"},
+                    {"type": "open_recommendations", "label": "查看学习建议", "href": "/space/learning-center/recommendations"},
                 ],
             }
 
@@ -652,3 +873,80 @@ class LearningPracticeService:
                        VALUES (?, ?, ?, 'practice_session', ?, '', '', '', ?, ?)""",
                     (self.repository._new_id("report"), session["project_id"], session_id, canonical_json(report), now, now),
                 )
+
+    def list_resumable_sessions(self, *, project_id: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
+        """Sessions that still have progress and can be continued."""
+        limit = max(1, min(int(limit), 100))
+        where = ["s.status IN ('active', 'paused')"]
+        params: list[Any] = []
+        if project_id:
+            where.append("s.project_id = ?")
+            params.append(project_id)
+        # Prefer sessions with any draft/submitted answer; hide pure zombies.
+        where.append(
+            "EXISTS (SELECT 1 FROM practice_session_items i WHERE i.session_id = s.id "
+            "AND (i.submitted_at IS NOT NULL OR TRIM(COALESCE(i.user_answer, '')) != ''))"
+        )
+        clause = " AND ".join(where)
+        with self.repository._connect() as conn:
+            rows = conn.execute(
+                f"""SELECT s.id, s.project_id, p.name AS project_name, s.mode, s.title, s.status,
+                           s.started_at, s.updated_at,
+                           COUNT(i.id) AS total,
+                           SUM(CASE WHEN i.submitted_at IS NOT NULL THEN 1 ELSE 0 END) AS answered,
+                           SUM(CASE WHEN TRIM(COALESCE(i.user_answer, '')) != '' THEN 1 ELSE 0 END) AS drafted
+                    FROM practice_sessions s
+                    JOIN learning_projects p ON p.id = s.project_id
+                    LEFT JOIN practice_session_items i ON i.session_id = s.id
+                    WHERE {clause}
+                    GROUP BY s.id
+                    ORDER BY s.updated_at DESC
+                    LIMIT ?""",
+                [*params, limit],
+            ).fetchall()
+            return [
+                {
+                    "id": row["id"],
+                    "project_id": row["project_id"],
+                    "project_name": row["project_name"],
+                    "mode": row["mode"],
+                    "title": row["title"],
+                    "status": row["status"],
+                    "started_at": row["started_at"],
+                    "updated_at": row["updated_at"],
+                    "total": int(row["total"] or 0),
+                    "answered": int(row["answered"] or 0),
+                    "drafted": int(row["drafted"] or 0),
+                }
+                for row in rows
+            ]
+
+    def archive_stale_sessions(self, *, older_than_seconds: float = 24 * 3600, only_empty: bool = True) -> dict[str, Any]:
+        """Mark abandoned empty/old active sessions so dashboards stay trustworthy."""
+        now = time.time()
+        cutoff = now - max(0.0, float(older_than_seconds))
+        with self.repository._connect() as conn:
+            if only_empty:
+                rows = conn.execute(
+                    """SELECT s.id FROM practice_sessions s
+                       WHERE s.status = 'active' AND s.started_at < ?
+                         AND NOT EXISTS (
+                           SELECT 1 FROM practice_session_items i
+                           WHERE i.session_id = s.id
+                             AND (i.submitted_at IS NOT NULL OR TRIM(COALESCE(i.user_answer, '')) != '')
+                         )""",
+                    (cutoff,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT id FROM practice_sessions WHERE status = 'active' AND started_at < ?",
+                    (cutoff,),
+                ).fetchall()
+            ids = [row["id"] for row in rows]
+            for session_id in ids:
+                conn.execute(
+                    "UPDATE practice_sessions SET status = 'abandoned', updated_at = ? WHERE id = ?",
+                    (now, session_id),
+                )
+        return {"archived_count": len(ids), "older_than_seconds": older_than_seconds, "only_empty": only_empty}
+

@@ -11,3 +11,24 @@ def test_recommendations_are_advisory_and_actions_are_audited(tmp_path: Path):
  target=next(x for x in items if x['recommendation_type']=='practice_proposal'); decided=svc.decide(recommendation_id=target['id'],action='edited_accepted',payload={'limit':5})
  assert decided['actions'][0]['action']=='edited_accepted'
  with r._connect() as c: assert c.execute('SELECT COUNT(*) FROM practice_sessions').fetchone()[0]==0
+
+
+
+def test_accept_recommendation_returns_next_action(tmp_path: Path) -> None:
+    from deeptutor.services.learning_center import LearningCenterRepository
+    from deeptutor.services.learning_center.recommendations import LearningRecommendationService
+    from deeptutor.services.learning_center.practice import LearningPracticeService
+    from tests.services.learning_center.test_practice import _seed
+    repo = LearningCenterRepository(tmp_path / "learning_center.db")
+    ids = _seed(repo)
+    practice = LearningPracticeService(repo)
+    session = practice.start(project_id=ids["project"], mode="learning", limit=1, question_ids=[ids["first"]])
+    item = session["questions"][0]
+    practice.submit(session["id"], [{"id": item["id"], "user_answer": "Z", "confidence": "sure"}], finish=True)
+    service = LearningRecommendationService(repo)
+    items = service.generate(project_id=ids["project"], trigger="requested")
+    assert items
+    decided = service.decide(recommendation_id=items[0]["id"], action="accepted")
+    assert decided.get("next_action")
+    assert decided["next_action"]["type"] == "open_practice"
+    assert decided["next_action"]["query"]["project_id"] == ids["project"]

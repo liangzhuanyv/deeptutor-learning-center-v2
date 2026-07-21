@@ -166,3 +166,53 @@ def test_propose_prefers_unseen_over_already_attempted(tmp_path: Path) -> None:
     unseen = service.propose(project_id=ids["project"], module_id=ids["module"], status="unseen", limit=50)
     assert all(q["attempt_count"] == 0 for q in unseen["questions"])
     assert first_ids.isdisjoint({q["question_id"] for q in unseen["questions"]})
+
+
+
+def test_start_pins_question_ids_and_finish_grades_autosave(tmp_path: Path) -> None:
+    repo = LearningCenterRepository(tmp_path / "learning_center.db")
+    ids = _seed(repo)
+    service = LearningPracticeService(repo)
+
+    proposal = service.propose(project_id=ids["project"], limit=2)
+    pinned = [q["question_id"] for q in proposal["questions"]]
+    assert len(pinned) == 2
+
+    # Force a different random order by starting with explicit ids reversed.
+    session = service.start(
+        project_id=ids["project"],
+        mode="exam",
+        question_ids=list(reversed(pinned)),
+        limit=2,
+    )
+    started_ids = [q["question_id"] for q in session["questions"]]
+    assert started_ids == list(reversed(pinned))
+
+    first, second = session["questions"]
+    # Autosave both answers but only submit empty finish payload.
+    service.autosave(session["id"], [
+        {"id": first["id"], "user_answer": "A", "confidence": "sure"},
+        {"id": second["id"], "user_answer": "B", "confidence": "guess"},
+    ])
+    finished = service.submit(session["id"], [], finish=True)
+    assert finished["status"] == "completed"
+    assert all(q["submitted_at"] is not None for q in finished["questions"])
+    with repo._connect() as conn:
+        attempts = conn.execute("SELECT COUNT(*) FROM attempts WHERE session_id=?", (session["id"],)).fetchone()[0]
+    assert attempts == 2
+
+
+def test_list_resumable_hides_empty_zombies(tmp_path: Path) -> None:
+    repo = LearningCenterRepository(tmp_path / "learning_center.db")
+    ids = _seed(repo)
+    service = LearningPracticeService(repo)
+    empty = service.start(project_id=ids["project"], mode="learning", limit=1)
+    active = service.start(project_id=ids["project"], mode="learning", limit=1)
+    item = active["questions"][0]
+    service.autosave(active["id"], [{"id": item["id"], "user_answer": "A"}])
+    resumable = service.list_resumable_sessions(project_id=ids["project"])
+    assert {row["id"] for row in resumable} == {active["id"]}
+    archived = service.archive_stale_sessions(older_than_seconds=0, only_empty=True)
+    assert archived["archived_count"] >= 1
+    empty_after = service.get(empty["id"])
+    assert empty_after["status"] == "abandoned"

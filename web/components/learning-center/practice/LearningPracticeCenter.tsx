@@ -2,6 +2,8 @@
 /* eslint-disable i18n/no-literal-ui-text -- Learning Center v2 is Chinese-first pending locale extraction. */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Bookmark, CheckCircle2, ChevronLeft, ChevronRight, Clock3, Loader2, MessageCircle, Pause, Play, Send, Sparkles, Target } from "lucide-react";
 
 import LearningCenterNav from "@/components/learning-center/LearningCenterNav";
@@ -16,6 +18,8 @@ import {
   getPracticeDiscussion,
   getPracticeProposal,
   getPracticeReport,
+  getPracticeSession,
+  listResumablePracticeSessions,
   pausePracticeSession,
   resumePracticeSession,
   setPracticeBookmark,
@@ -31,6 +35,7 @@ import {
   type PracticeReport,
   type PracticeSession,
   type PracticeSessionItem,
+  type ResumablePracticeSession,
 } from "@/lib/learning-center-api";
 
 type Draft = {
@@ -64,6 +69,8 @@ function answerPayload(item: PracticeSessionItem, draft: Draft | undefined): Pra
 }
 
 export default function LearningPracticeCenter() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [projects, setProjects] = useState<LearningProjectOption[]>([]);
   const [modules, setModules] = useState<LearningModuleOption[]>([]);
   const [knowledgePoints, setKnowledgePoints] = useState<LearningKnowledgePointOption[]>([]);
@@ -77,6 +84,8 @@ export default function LearningPracticeCenter() {
   const [statusFilter, setStatusFilter] = useState("unseen");
   const [proposal, setProposal] = useState<PracticeProposal | null>(null);
   const [session, setSession] = useState<PracticeSession | null>(null);
+  const [resumable, setResumable] = useState<ResumablePracticeSession[]>([]);
+  const bootstrappedRef = useRef(false);
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [currentIndex, setCurrentIndex] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -116,27 +125,82 @@ export default function LearningPracticeCenter() {
     limit,
   }), [difficulty, knowledgePointId, limit, moduleId, projectId, statusFilter]);
 
+  const hydrateSession = useCallback(async (sessionId: string) => {
+    setWorking(true);
+    setError(null);
+    try {
+      let next = await getPracticeSession(sessionId);
+      if (next.status === "paused") {
+        next = await resumePracticeSession(sessionId);
+      }
+      setSession(next);
+      setDrafts(Object.fromEntries(next.questions.map((item) => [item.id, toDraft(item)])));
+      const firstOpen = next.questions.findIndex((item) => item.submitted_at == null);
+      setCurrentIndex(firstOpen >= 0 ? firstOpen : 0);
+      setDirty(false);
+      setReport(null);
+      setProjectId(next.project_id);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "无法恢复练习会话");
+    } finally {
+      setWorking(false);
+    }
+  }, []);
+
   useEffect(() => {
     void (async () => {
       try {
         const values = await getLearningProjects();
         setProjects(values);
-        setProjectId((current) => current || values[0]?.id || "");
+        const qpProject = searchParams.get("project_id") || "";
+        const initialProject = qpProject || values[0]?.id || "";
+        setProjectId((current) => current || initialProject);
+
+        // Prefill filters from dashboard / recommendation deep links.
+        const qpLimit = Number(searchParams.get("limit") || "");
+        if (Number.isFinite(qpLimit) && qpLimit > 0) setLimit(Math.min(200, Math.max(1, qpLimit)));
+        const qpStatus = searchParams.get("status");
+        if (qpStatus != null) setStatusFilter(qpStatus);
+        const qpModule = searchParams.get("module_id");
+        if (qpModule) setModuleId(qpModule);
+        const qpDifficulty = searchParams.get("difficulty");
+        if (qpDifficulty) setDifficulty(qpDifficulty);
+        const qpMode = searchParams.get("mode");
+        if (qpMode === "learning" || qpMode === "exam") setMode(qpMode);
+
+        const sessionId = searchParams.get("sessionId") || searchParams.get("session_id");
+        if (sessionId && !bootstrappedRef.current) {
+          bootstrappedRef.current = true;
+          await hydrateSession(sessionId);
+        } else if (initialProject) {
+          try {
+            setResumable(await listResumablePracticeSessions(initialProject, 5));
+          } catch {
+            setResumable([]);
+          }
+        }
       } catch (reason) {
         setError(reason instanceof Error ? reason.message : "无法加载学习项目");
       } finally {
         setLoading(false);
       }
     })();
+    // Only bootstrap once on mount; query changes after start are intentional navigations.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    if (!projectId) { setModules([]); setKnowledgePoints([]); return; }
+    if (!projectId) { setModules([]); setKnowledgePoints([]); setResumable([]); return; }
     void Promise.all([getLearningModules(projectId), getLearningKnowledgePoints(projectId)])
       .then(([nextModules, nextKnowledgePoints]) => {
-        setModules(nextModules); setKnowledgePoints(nextKnowledgePoints); setModuleId(""); setKnowledgePointId("");
+        setModules(nextModules);
+        setKnowledgePoints(nextKnowledgePoints);
+        // Keep deep-linked module if still valid; otherwise reset.
+        setModuleId((current) => (current && nextModules.some((m) => m.id === current) ? current : ""));
+        setKnowledgePointId("");
       })
       .catch((reason) => setError(reason instanceof Error ? reason.message : "无法加载项目范围"));
+    void listResumablePracticeSessions(projectId, 5).then(setResumable).catch(() => setResumable([]));
   }, [projectId]);
 
   useEffect(() => {
@@ -173,10 +237,24 @@ export default function LearningPracticeCenter() {
     if (!projectId) return;
     setWorking(true); setError(null);
     try {
-      const next = await startPracticeSession({ ...formInput(), mode, time_budget_minutes: mode === "exam" ? timeBudget : null });
+      let activeProposal = proposal;
+      // If user did not preview, build a proposal first so start can pin the exact set.
+      if (!activeProposal || activeProposal.project_id !== projectId) {
+        activeProposal = await getPracticeProposal(formInput());
+        setProposal(activeProposal);
+      }
+      const questionIds = activeProposal.questions.map((item) => item.question_id);
+      const next = await startPracticeSession({
+        ...formInput(),
+        mode,
+        time_budget_minutes: mode === "exam" ? timeBudget : null,
+        question_ids: questionIds,
+        limit: questionIds.length || limit,
+      });
       setSession(next);
       setDrafts(Object.fromEntries(next.questions.map((item) => [item.id, toDraft(item)])));
       setCurrentIndex(0); setDirty(false); setReport(null);
+      router.replace(`/space/learning-center/practice?sessionId=${encodeURIComponent(next.id)}`);
     } catch (reason) { setError(reason instanceof Error ? reason.message : "无法开始练习"); }
     finally { setWorking(false); }
   };
@@ -338,8 +416,26 @@ export default function LearningPracticeCenter() {
   if (!session) return (
     <div className="mx-auto w-full max-w-6xl p-4 sm:p-6 lg:p-8">
       <LearningCenterNav />
-      <SpaceSectionHeader icon={Target} title="学习训练中心" description="按项目、模块和知识点生成可恢复的学习或考试会话。" />
+      <SpaceSectionHeader icon={Target} title="学习训练中心" description="预览后固定题集开练；刷新可通过会话链接继续。默认优先未作答。" />
       {error && <p role="alert" className="mt-4 rounded-xl border border-red-300/70 bg-red-50 px-3 py-2 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200">{error}</p>}
+      {!!resumable.length && (
+        <section className="mt-5 rounded-2xl border border-emerald-500/25 bg-emerald-500/5 p-4">
+          <h2 className="text-sm font-semibold">可继续的会话</h2>
+          <div className="mt-3 space-y-2">
+            {resumable.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => void hydrateSession(item.id)}
+                className="flex w-full items-center justify-between rounded-xl border border-[var(--border)] bg-[var(--card)] px-3 py-2 text-left text-sm hover:border-emerald-500/50"
+              >
+                <span>{item.project_name} · {item.mode === "exam" ? "考试" : "学习"} · 已答 {item.answered}/{item.total}</span>
+                <span className="text-xs text-emerald-700 dark:text-emerald-300">继续</span>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
       {!projects.length ? <div className="mt-6 rounded-2xl border border-dashed border-[var(--border)] p-8 text-center text-sm text-[var(--muted-foreground)]">还没有可训练项目。请先在导入中心导入题目。</div> : <div className="mt-6 grid gap-5 lg:grid-cols-[minmax(0,1fr)_22rem]">
         <section className="rounded-2xl border border-[var(--border)] bg-[var(--card)] p-5">
           <h2 className="font-semibold">组卷设置</h2>
@@ -364,7 +460,11 @@ export default function LearningPracticeCenter() {
   if (session.status === "completed" && report) return (
     <div className="mx-auto w-full max-w-5xl p-4 sm:p-6 lg:p-8"><LearningCenterNav /><SpaceSectionHeader icon={CheckCircle2} title="本次练习报告" description="会话已完成，所有原始答案和解析现已可见。" />
       <div className="mt-6 grid gap-4 sm:grid-cols-4">{[["题目", report.total], ["已答", report.answered], ["正确", report.correct], ["正确率", report.accuracy == null ? "—" : `${Math.round(report.accuracy * 100)}%`]].map(([label, value]) => <div key={String(label)} className="rounded-2xl border border-[var(--border)] bg-[var(--card)] p-4"><p className="text-xs text-[var(--muted-foreground)]">{label}</p><p className="mt-1 text-2xl font-semibold">{value}</p></div>)}</div>
-      <section className="mt-5 rounded-2xl border border-[var(--border)] bg-[var(--card)] p-5"><h2 className="font-semibold">学习建议</h2><p className="mt-2 text-sm text-[var(--muted-foreground)]">{report.ai_advisory.text}</p><div className="mt-4 flex flex-wrap gap-2">{report.follow_up_actions.map((action) => <button key={action.type} type="button" onClick={() => { setSession(null); setProposal(null); }} className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm">{action.label}</button>)}</div></section>
+      <section className="mt-5 rounded-2xl border border-[var(--border)] bg-[var(--card)] p-5"><div className="flex items-center justify-between gap-2"><h2 className="font-semibold">规则建议</h2><span className="rounded-full bg-slate-500/10 px-2 py-0.5 text-[11px] text-[var(--muted-foreground)]">非模型生成</span></div><p className="mt-2 text-sm text-[var(--muted-foreground)]">{report.ai_advisory.text}</p><div className="mt-4 flex flex-wrap gap-2">{report.follow_up_actions.map((action) => {
+        const href = (action as { href?: string }).href;
+        if (href) return <Link key={action.type} href={href} className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm">{action.label}</Link>;
+        return <button key={action.type} type="button" onClick={() => { setSession(null); setProposal(null); router.replace("/space/learning-center/practice"); }} className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm">{action.label}</button>;
+      })}</div></section>
       <section className="mt-5 space-y-3">{session.questions.map((question) => <article key={question.id} className="rounded-2xl border border-[var(--border)] bg-[var(--card)] p-4"><p className="text-sm font-medium">{question.position}. <ExamRichText as="span" text={question.stem} /></p><p className={`mt-2 text-sm ${question.is_correct ? "text-emerald-600" : "text-red-600"}`}>{question.is_correct === null ? "未判定" : question.is_correct ? "回答正确" : "回答错误"} · 你的答案：{question.user_answer || "未作答"}</p><p className="mt-1 text-sm">正确答案：{question.source_answer || "未提供"}</p>{question.source_explanation && <ExamRichText className="mt-2 rounded-lg bg-[var(--muted)] p-3 text-sm text-[var(--muted-foreground)]" text={question.source_explanation} />}</article>)}</section>
     </div>
   );
@@ -378,10 +478,10 @@ export default function LearningPracticeCenter() {
         {!Object.keys(currentQuestion.options).length && <textarea value={activeDraft.user_answer} onChange={(event) => updateDraft({ user_answer: event.target.value })} disabled={session.status === "paused" || currentQuestion.submitted_at !== null} className="mt-5 min-h-28 w-full rounded-xl border border-[var(--border)] bg-transparent p-3 text-sm" placeholder="输入你的答案" />}
         <div className="mt-5 flex flex-wrap gap-2"><span className="py-2 text-xs text-[var(--muted-foreground)]">把握：</span>{(["sure", "uncertain", "guess"] as const).map((value) => <button type="button" key={value} onClick={() => updateDraft({ confidence: value })} className={`rounded-lg border px-2.5 py-1.5 text-xs ${activeDraft.confidence === value ? "border-sky-500 text-sky-600" : "border-[var(--border)]"}`}>{value === "sure" ? "确定" : value === "uncertain" ? "不确定" : "猜测"}</button>)}<button type="button" onClick={() => updateDraft({ marked_for_review: !activeDraft.marked_for_review })} className={`rounded-lg border px-2.5 py-1.5 text-xs ${activeDraft.marked_for_review ? "border-amber-500 text-amber-600" : "border-[var(--border)]"}`}>标记复查</button></div>
         {Object.keys(currentQuestion.options).length > 0 && <div className="mt-3 flex flex-wrap gap-2 text-xs text-[var(--muted-foreground)]"><span className="py-1">排除：</span>{Object.keys(currentQuestion.options).map((key) => <button type="button" key={key} onClick={() => updateDraft({ eliminated_option_keys: activeDraft.eliminated_option_keys.includes(key) ? activeDraft.eliminated_option_keys.filter((value) => value !== key) : [...activeDraft.eliminated_option_keys, key] })} className={`rounded px-2 py-1 ${activeDraft.eliminated_option_keys.includes(key) ? "bg-red-100 text-red-700 line-through" : "bg-[var(--muted)]"}`}>{key}</button>)}</div>}
-        {currentQuestion.source_answer !== undefined && <div className={`mt-5 rounded-xl border p-4 ${currentQuestion.is_correct ? "border-emerald-300 bg-emerald-50/70" : "border-red-300 bg-red-50/70"}`}><p className="text-sm font-medium">{currentQuestion.is_correct ? "回答正确" : "回答错误"} · 原始答案：{currentQuestion.source_answer || "未提供"}</p>{currentQuestion.source_explanation && <ExamRichText className="mt-2 text-sm text-[var(--muted-foreground)]" text={currentQuestion.source_explanation} />}<p className="mt-2 text-xs text-[var(--muted-foreground)]">来源：原始题库</p></div>}
+        {currentQuestion.source_answer !== undefined && <div className={`mt-5 rounded-xl border p-4 ${currentQuestion.is_correct ? "border-emerald-300 bg-emerald-50/70" : "border-red-300 bg-red-50/70"}`}><p className="text-sm font-medium">{currentQuestion.is_correct ? "回答正确" : "回答错误"} · 原始答案：{currentQuestion.source_answer || "未提供"}</p>{currentQuestion.source_explanation && <ExamRichText className="mt-2 text-sm text-[var(--muted-foreground)]" text={currentQuestion.source_explanation} />}<p className="mt-2 text-xs text-[var(--muted-foreground)]">来源：{currentQuestion.provenance?.kind === "ai_generated" ? `AI 生成解析${currentQuestion.provenance.model ? `（${currentQuestion.provenance.model}）` : ""}` : "原始题库"}</p></div>}
         <div className="mt-6 flex items-center justify-between"><button type="button" onClick={() => setCurrentIndex((index) => Math.max(0, index - 1))} disabled={currentIndex === 0} className="inline-flex items-center gap-1 rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-40"><ChevronLeft size={16} />上一题</button>{session.mode === "learning" && currentQuestion.submitted_at === null && <button type="button" onClick={() => void submitCurrent()} disabled={working || session.status === "paused"} className="rounded-lg bg-sky-600 px-4 py-2 text-sm text-white">提交并判题</button>}<button type="button" onClick={() => setCurrentIndex((index) => Math.min(session.questions.length - 1, index + 1))} disabled={currentIndex === session.questions.length - 1} className="inline-flex items-center gap-1 rounded-lg border border-[var(--border)] px-3 py-2 text-sm disabled:opacity-40">下一题<ChevronRight size={16} /></button></div>
       </main>
-      <aside className="order-3 self-start rounded-2xl border border-[var(--border)] bg-[var(--card)] p-4 xl:col-start-2 xl:row-start-2"><div className="flex items-center gap-2"><MessageCircle size={16} /><h2 className="text-sm font-semibold">本题讨论</h2></div><p className="mt-1 text-xs text-[var(--muted-foreground)]">讨论会持久保存到该题目。</p><div className="mt-3 max-h-60 space-y-2 overflow-auto">{discussion?.messages.length ? discussion.messages.map((message) => <p key={message.id} className={`rounded-lg p-2 text-xs ${message.role === "user" ? "bg-sky-50 text-sky-900 dark:bg-sky-950/30 dark:text-sky-100" : "bg-[var(--muted)]"}`}>{message.content}</p>) : <p className="text-xs text-[var(--muted-foreground)]">还没有讨论记录。</p>}</div><textarea value={discussionText} onChange={(event) => setDiscussionText(event.target.value)} className="mt-3 min-h-20 w-full rounded-lg border border-[var(--border)] bg-transparent p-2 text-xs" placeholder="记录你的疑问或推理…" /><button type="button" onClick={() => void postDiscussion()} disabled={working || !discussionText.trim()} className="mt-2 inline-flex w-full items-center justify-center gap-1 rounded-lg border border-[var(--border)] py-2 text-xs disabled:opacity-50"><Send size={13} />保存讨论</button><div className="mt-4 rounded-lg bg-[var(--muted)] p-3 text-xs text-[var(--muted-foreground)]"><Sparkles className="mb-1" size={14} />AI 深度讨论会在后续增强中使用已保存的题目、答案和你的推理作为上下文。</div></aside>
+      <aside className="order-3 self-start rounded-2xl border border-[var(--border)] bg-[var(--card)] p-4 xl:col-start-2 xl:row-start-2"><div className="flex items-center gap-2"><MessageCircle size={16} /><h2 className="text-sm font-semibold">本题笔记</h2></div><p className="mt-1 text-xs text-[var(--muted-foreground)]">当前仅保存你的笔记，不会自动调用 AI 教练。</p><div className="mt-3 max-h-60 space-y-2 overflow-auto">{discussion?.messages.length ? discussion.messages.map((message) => <p key={message.id} className={`rounded-lg p-2 text-xs ${message.role === "user" ? "bg-sky-50 text-sky-900 dark:bg-sky-950/30 dark:text-sky-100" : "bg-[var(--muted)]"}`}>{message.content}</p>) : <p className="text-xs text-[var(--muted-foreground)]">还没有讨论记录。</p>}</div><textarea value={discussionText} onChange={(event) => setDiscussionText(event.target.value)} className="mt-3 min-h-20 w-full rounded-lg border border-[var(--border)] bg-transparent p-2 text-xs" placeholder="记录你的疑问或推理…" /><button type="button" onClick={() => void postDiscussion()} disabled={working || !discussionText.trim()} className="mt-2 inline-flex w-full items-center justify-center gap-1 rounded-lg border border-[var(--border)] py-2 text-xs disabled:opacity-50"><Send size={13} />保存讨论</button><div className="mt-4 rounded-lg bg-[var(--muted)] p-3 text-xs text-[var(--muted-foreground)]"><Sparkles className="mb-1" size={14} />AI 深度讨论会在后续增强中使用已保存的题目、答案和你的推理作为上下文。</div></aside>
     </div>}
   </div>;
 }

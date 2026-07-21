@@ -331,6 +331,7 @@ class PracticeStartRequest(PracticeProposalRequest):
     mode: Literal['learning', 'exam']
     title: str = Field(default='', max_length=500)
     time_budget_minutes: int | None = Field(default=None, ge=1, le=600)
+    question_ids: list[str] = Field(default_factory=list, max_length=200)
 
 
 class PracticeAutosaveItem(BaseModel):
@@ -371,6 +372,25 @@ def start_practice_session(payload: PracticeStartRequest) -> dict[str, Any]:
 def get_practice_session(session_id: str) -> dict[str, Any]:
     try:
         return _practice_service().get(session_id)
+    except Exception as exc:
+        _raise_domain_error(exc); raise AssertionError('unreachable')
+
+
+@router.get('/practice/resumable')
+def list_resumable_practice_sessions(project_id: str | None = None, limit: int = 20) -> list[dict[str, Any]]:
+    try:
+        return _practice_service().list_resumable_sessions(project_id=project_id, limit=limit)
+    except Exception as exc:
+        _raise_domain_error(exc); raise AssertionError('unreachable')
+
+
+@router.post('/practice/sessions/archive-stale')
+def archive_stale_practice_sessions(older_than_seconds: float = 86400, only_empty: bool = True) -> dict[str, Any]:
+    try:
+        return _practice_service().archive_stale_sessions(
+            older_than_seconds=older_than_seconds,
+            only_empty=only_empty,
+        )
     except Exception as exc:
         _raise_domain_error(exc); raise AssertionError('unreachable')
 

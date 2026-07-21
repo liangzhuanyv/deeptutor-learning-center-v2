@@ -218,18 +218,36 @@ export interface LearningDashboardOverview {
   accuracy: number | null;
   review_due_count: number;
   active_session_count: number;
+  abandoned_empty_session_count?: number;
   last_session: {
     id: string;
     mode: string;
     title: string;
+    status?: string;
     started_at: number;
     completed_at: number | null;
     project_id: string;
     project_name: string;
     total: number;
     answered: number;
+    drafted?: number;
     accuracy: number | null;
+    resumable?: boolean;
   } | null;
+}
+
+export interface ResumablePracticeSession {
+  id: string;
+  project_id: string;
+  project_name: string;
+  mode: string;
+  title: string;
+  status: string;
+  started_at: number;
+  updated_at: number;
+  total: number;
+  answered: number;
+  drafted: number;
 }
 
 export interface LearningDashboardProject {
@@ -331,6 +349,7 @@ export interface PracticeProposalInput {
   difficulty?: string | null;
   status?: string | null;
   limit?: number;
+  question_ids?: string[];
 }
 
 export interface PracticeProposalQuestion {
@@ -374,7 +393,13 @@ export interface PracticeSessionItem {
   is_correct: boolean | null;
   source_answer?: string;
   source_explanation?: string;
-  provenance?: { source_id: string | null; kind: string };
+  ai_explanation?: string | null;
+  provenance?: {
+    source_id: string | null;
+    kind: string;
+    provider?: string | null;
+    model?: string | null;
+  };
 }
 
 export interface PracticeSession {
@@ -411,8 +436,8 @@ export interface PracticeReport {
   accuracy: number | null;
   confidence: Record<string, { count: number; correct: number; accuracy: number | null }>;
   knowledge_point_impact: Record<string, { total: number; wrong: number }>;
-  ai_advisory: { text: string; provider: string; model: string; generated: boolean };
-  follow_up_actions: Array<{ type: string; label: string }>;
+  ai_advisory: { text: string; provider: string; model: string; generated: boolean; label?: string };
+  follow_up_actions: Array<{ type: string; label: string; href?: string }>;
 }
 
 export interface PracticeDiscussion {
@@ -438,8 +463,24 @@ export function getPracticeProposal(input: PracticeProposalInput): Promise<Pract
   return request("/practice/proposal", { method: "POST", body: JSON.stringify(input) });
 }
 
-export function startPracticeSession(input: PracticeProposalInput & { mode: PracticeMode; title?: string; time_budget_minutes?: number | null }): Promise<PracticeSession> {
+export function startPracticeSession(input: PracticeProposalInput & { mode: PracticeMode; title?: string; time_budget_minutes?: number | null; question_ids?: string[] }): Promise<PracticeSession> {
   return request("/practice/sessions", { method: "POST", body: JSON.stringify(input) });
+}
+
+export function listResumablePracticeSessions(projectId?: string, limit = 20): Promise<ResumablePracticeSession[]> {
+  const params = new URLSearchParams();
+  if (projectId) params.set("project_id", projectId);
+  params.set("limit", String(limit));
+  const q = params.toString();
+  return request(`/practice/resumable${q ? `?${q}` : ""}`);
+}
+
+export function archiveStalePracticeSessions(olderThanSeconds = 86400, onlyEmpty = true): Promise<{ archived_count: number }> {
+  const params = new URLSearchParams({
+    older_than_seconds: String(olderThanSeconds),
+    only_empty: onlyEmpty ? "true" : "false",
+  });
+  return request(`/practice/sessions/archive-stale?${params.toString()}`, { method: "POST" });
 }
 
 export function getPracticeSession(sessionId: string): Promise<PracticeSession> {
@@ -523,7 +564,23 @@ export function setQuestionMastery(questionId: string, mastered: boolean, note =
 export interface LearningRecommendation { id: string; project_id: string | null; recommendation_type: string; title: string; explanation: string; evidence: Array<Record<string, unknown>>; proposed_action: Record<string, unknown>; provider: string; model: string; prompt_version: string; confidence: number | null; estimated_minutes: number | null; created_at: number; actions: Array<{ action: string; payload: Record<string, unknown>; created_at: number }>; }
 export function getLearningRecommendations(projectId?: string): Promise<LearningRecommendation[]> { return request(`/recommendations${projectId ? `?project_id=${encodeURIComponent(projectId)}` : ""}`); }
 export function generateLearningRecommendations(input: { project_id: string; trigger?: string; time_budget_text?: string }): Promise<LearningRecommendation[]> { return request("/recommendations/generate", {method:"POST",body:JSON.stringify(input)}); }
-export function decideLearningRecommendation(id: string, action: "accepted"|"edited_accepted"|"ignored"|"deferred"|"reduced", payload: Record<string, unknown> = {}): Promise<LearningRecommendation> { const route=action === "ignored" ? "ignore" : action === "deferred" ? "defer" : "accept"; return request(`/recommendations/${encodeURIComponent(id)}/${route}`, {method:"POST",body:JSON.stringify({action,payload})}); }
+export type RecommendationDecisionAction = "accepted"|"edited_accepted"|"ignored"|"deferred"|"reduced";
+export interface RecommendationNextAction {
+  type: string;
+  href: string;
+  query: Record<string, string | number | null | undefined>;
+  label: string;
+  requires_confirmation?: boolean;
+}
+export interface LearningRecommendationDecision extends LearningRecommendation {
+  decision?: RecommendationDecisionAction;
+  next_action?: RecommendationNextAction | null;
+}
+export function decideLearningRecommendation(id: string, action: RecommendationDecisionAction, payload: Record<string, unknown> = {}): Promise<LearningRecommendationDecision> {
+  const route = action === "ignored" ? "ignore" : action === "deferred" ? "defer" : "accept";
+  return request(`/recommendations/${encodeURIComponent(id)}/${route}`, { method: "POST", body: JSON.stringify({ action, payload }) });
+}
+
 export interface KnowledgeHeatmapCell { id:string; name:string; project_id:string; question_count:number; attempt_count:number; wrong_count:number; }
 export interface ConfidenceAnalytics { confidence:string; attempt_count:number; correct_count:number; accuracy:number|null; }
 export interface ResponseTimeAnalytics { question_type:string; attempt_count:number; average_seconds:number|null; min_seconds:number|null; max_seconds:number|null; }

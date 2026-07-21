@@ -25,3 +25,21 @@ def test_manual_mastery_survives_later_error_and_reopen_is_advisory(tmp_path: Pa
     assert detail['evidence']
     assert mastery.review_queue(project_id=project_id,filter='reopen')[0]['question_id']==question_id
     assert mastery.recalculate(project_id=project_id,dry_run=True)['question_count']==1
+
+
+
+def test_review_queue_due_includes_wrong_states_without_schedule(tmp_path: Path) -> None:
+    from deeptutor.services.learning_center.mastery import LearningMasteryService
+    from deeptutor.services.learning_center.practice import LearningPracticeService
+    repo = LearningCenterRepository(tmp_path / "learning_center.db")
+    # minimal seed via practice helper patterns
+    from tests.services.learning_center.test_practice import _seed
+    ids = _seed(repo)
+    practice = LearningPracticeService(repo)
+    session = practice.start(project_id=ids["project"], mode="learning", limit=1, question_ids=[ids["first"]])
+    item = session["questions"][0]
+    # Submit wrong answer to create wrong state
+    practice.submit(session["id"], [{"id": item["id"], "user_answer": "Z", "confidence": "sure"}], finish=True)
+    mastery = LearningMasteryService(repo)
+    due = mastery.review_queue(project_id=ids["project"], filter="due")
+    assert any(row["question_id"] == ids["first"] for row in due)
