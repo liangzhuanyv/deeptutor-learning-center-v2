@@ -266,6 +266,52 @@ export default function ExamPracticeSection() {
     }
   }, [currentQuestion, loadReview, selectedAnswer, session]);
 
+  // Keyboard: 1-4 select options by display order; Space submits current answer.
+  useEffect(() => {
+    if (!session || !currentQuestion) return;
+    if (currentQuestion.submitted_at) return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const tag = target?.tagName?.toLowerCase();
+      if (
+        tag === "input" ||
+        tag === "textarea" ||
+        tag === "select" ||
+        target?.isContentEditable
+      ) {
+        return;
+      }
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+
+      const keys = optionEntries(currentQuestion).map(([key]) => key);
+      const digit = event.code.startsWith("Digit")
+        ? event.code.slice(5)
+        : event.code.startsWith("Numpad") &&
+            event.code.length === 7 &&
+            event.code[6] >= "0" &&
+            event.code[6] <= "9"
+          ? event.code.slice(6)
+          : "";
+      if (digit >= "1" && digit <= "4") {
+        const key = keys[Number(digit) - 1];
+        if (!key) return;
+        event.preventDefault();
+        setAnswer(currentQuestion, key);
+        return;
+      }
+
+      if ((event.code === "Space" || event.key === " ") && selectedAnswer && !submitting) {
+        event.preventDefault();
+        void submitCurrent();
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [currentQuestion, selectedAnswer, session, setAnswer, submitCurrent, submitting]);
+
+
   const toggleMastered = useCallback(async (item: WrongBookItem) => {
     try {
       await updateWrongBookStatus(

@@ -1,7 +1,7 @@
 "use client";
 /* eslint-disable i18n/no-literal-ui-text -- Learning Center v2 is Chinese-first pending locale extraction. */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Bookmark, CheckCircle2, ChevronLeft, ChevronRight, Clock3, Loader2, MessageCircle, Pause, Play, Send, Sparkles, Target } from "lucide-react";
 
 import LearningCenterNav from "@/components/learning-center/LearningCenterNav";
@@ -183,19 +183,118 @@ export default function LearningPracticeCenter() {
 
   const updateDraft = (changes: Partial<Draft>) => {
     if (!currentQuestion) return;
-    setDrafts((current) => ({ ...current, [currentQuestion.id]: { ...(current[currentQuestion.id] ?? toDraft(currentQuestion)), ...changes } }));
+    setDrafts((current) => ({
+      ...current,
+      [currentQuestion.id]: {
+        ...(current[currentQuestion.id] ?? toDraft(currentQuestion)),
+        ...changes,
+      },
+    }));
     setDirty(true);
   };
 
+  const selectOptionKey = useCallback(
+    (key: string) => {
+      if (!session || !currentQuestion || !activeDraft) return;
+      if (session.status === "paused" || currentQuestion.submitted_at !== null) return;
+      const optionKeys = Object.keys(currentQuestion.options);
+      if (!optionKeys.includes(key)) return;
+      if (currentQuestion.question_type === "multiple_choice") {
+        const values = activeDraft.user_answer.split(",").filter(Boolean);
+        const next = values.includes(key)
+          ? values.filter((value) => value !== key)
+          : [...values, key];
+        updateDraft({ user_answer: next.join(",") });
+        return;
+      }
+      updateDraft({ user_answer: key });
+    },
+    // updateDraft closes over currentQuestion; re-bind when question/draft changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [activeDraft, currentQuestion, session],
+  );
+
   const submitCurrent = async () => {
     if (!session || !currentQuestion) return;
-    setWorking(true); setError(null);
+    if (session.status === "paused") return;
+    if (session.mode === "learning" && currentQuestion.submitted_at !== null) return;
+    setWorking(true);
+    setError(null);
     try {
-      const next = await submitPracticeSession(session.id, [answerPayload(currentQuestion, drafts[currentQuestion.id])]);
-      setSession(next); setDirty(false);
-    } catch (reason) { setError(reason instanceof Error ? reason.message : "提交答案失败"); }
-    finally { setWorking(false); }
+      const next = await submitPracticeSession(session.id, [
+        answerPayload(currentQuestion, drafts[currentQuestion.id]),
+      ]);
+      setSession(next);
+      setDirty(false);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "提交答案失败");
+    } finally {
+      setWorking(false);
+    }
   };
+
+  const submitCurrentRef = useRef(submitCurrent);
+  submitCurrentRef.current = submitCurrent;
+
+  // Keyboard: 1-4 / numpad 1-4 select options by order; Space submits
+  // (learning mode, when not typing in an input).
+  useEffect(() => {
+    if (!session || !currentQuestion || !activeDraft) return;
+    if (session.status === "completed") return;
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const tag = target?.tagName?.toLowerCase();
+      if (
+        tag === "input" ||
+        tag === "textarea" ||
+        tag === "select" ||
+        target?.isContentEditable
+      ) {
+        return;
+      }
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+
+      const optionKeys = Object.keys(currentQuestion.options).sort((a, b) =>
+        a.localeCompare(b, undefined, { numeric: true }),
+      );
+
+      // Digit 1-4 / numpad 1-4 → Nth option (A/B/C/D by sort order)
+      const digit =
+        event.code.startsWith("Digit")
+          ? event.code.slice(5)
+          : event.code.startsWith("Numpad") &&
+              event.code.length === 7 &&
+              event.code[6] >= "0" &&
+              event.code[6] <= "9"
+            ? event.code.slice(6)
+            : "";
+      if (digit >= "1" && digit <= "4") {
+        const index = Number(digit) - 1;
+        const key = optionKeys[index];
+        if (!key) return;
+        event.preventDefault();
+        selectOptionKey(key);
+        return;
+      }
+
+      if (event.code === "Space" || event.key === " ") {
+        // Learning: submit current. Exam finish is explicit (交卷).
+        if (
+          session.mode === "learning" &&
+          currentQuestion.submitted_at === null &&
+          session.status !== "paused" &&
+          !working
+        ) {
+          event.preventDefault();
+          void submitCurrentRef.current();
+        }
+      }
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [activeDraft, currentQuestion, selectOptionKey, session, working]);
 
   const finish = async () => {
     if (!session) return;
